@@ -3,7 +3,7 @@
 ; up from C.
 
 MAGIC    equ 0x1BADB002
-FLAGS    equ 0
+FLAGS    equ 2
 CHECKSUM equ -(MAGIC + FLAGS)
 
 section .multiboot
@@ -22,6 +22,8 @@ global _start
 extern kernel_main
 _start:
     mov esp, stack_top
+    push ebx
+    push eax
     call kernel_main
 .hang:
     cli

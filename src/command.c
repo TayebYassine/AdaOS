@@ -5,6 +5,7 @@
 #include "io.h"
 #include "kprintf.h"
 #include "libc.h"
+#include "pmm.h"
 #include "screen.h"
 #include "timer.h"
 
@@ -27,11 +28,12 @@ enum command_id {
     CMD_CLEAR,
     CMD_UPTIME,
     CMD_SLEEP,
+    CMD_MEM,
     CMD_NOT_FOUND = -1,
 };
 
 static const char* command_names[] = {"print", "help",   "shutdown", "reboot",
-                                      "clear", "uptime", "sleep"};
+                                      "clear", "uptime", "sleep",    "mem"};
 
 static const char* command_help[] = {
     "print <text> - print text on the screen",
@@ -40,7 +42,8 @@ static const char* command_help[] = {
     "reboot       - restart the computer",
     "clear        - clear the screen",
     "uptime       - how long AdaOS has been running",
-    "sleep <sec>  - pause for a number of seconds"};
+    "sleep <sec>  - pause for a number of seconds",
+    "mem          - show RAM, pages and where the kernel sits"};
 
 /* Look up a command by name; returns its id or CMD_NOT_FOUND. */
 static int find_command(const char* name) {
@@ -208,6 +211,21 @@ void command_execute(char* line) {
             print_char(':');
             print_padded(total % 60, 2);
             kprintf(" (%d seconds)\n", (int)total);
+            break;
+        }
+        case CMD_MEM: {
+            const struct pmm_stats* memory = pmm_get_stats();
+            uint32_t kernel_kb =
+                (memory->kernel_end - memory->kernel_start) / 1024;
+
+            kprintf("RAM: %d KB installed, %d KB usable\n",
+                    (int)memory->total_kb, (int)memory->available_kb);
+            kprintf("Kernel: 0x%x - 0x%x (%d KB)\n", memory->kernel_start,
+                    memory->kernel_end, (int)kernel_kb);
+            kprintf("Pages: %d total, %d free, %d used (%d KB each)\n",
+                    (int)memory->total_pages, (int)memory->free_pages,
+                    (int)memory->used_pages, PMM_PAGE_SIZE / 1024);
+            kprintf("Boot memory map: %d regions\n", (int)memory->region_count);
             break;
         }
         case CMD_SLEEP: {
