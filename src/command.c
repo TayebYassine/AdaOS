@@ -1,6 +1,7 @@
 #include "command.h"
 
 #include "io.h"
+#include "libc.h"
 #include "screen.h"
 
 #include <stdint.h>
@@ -32,21 +33,10 @@ static const char* command_help[] = {
     "clear        - clear the screen"
 };
 
-/* Compare two strings: 1 if they are equal, 0 otherwise. */
-static int str_eq(const char* a, const char* b) {
-    int i = 0;
-
-    while (a[i] != '\0' && a[i] == b[i]) {
-        i++;
-    }
-
-    return a[i] == b[i];
-}
-
 /* Look up a command by name; returns its id or CMD_NOT_FOUND. */
 static int find_command(const char* name) {
     for (int i = 0; i < (int)ARRAY_COUNT(command_names); i++) {
-        if (str_eq(name, command_names[i])) {
+        if (strcmp(name, command_names[i]) == 0) {
             return i;
         }
     }

@@ -16,7 +16,8 @@ echo "[2/4] Compiling C sources..."
 OBJECTS=("$BUILD/boot.o")
 for src in "$SRC"/*.c; do
     obj="$BUILD/$(basename "${src%.c}.o")"
-    gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -c "$src" -o "$obj"
+    # -fno-builtin: we define strlen/memcpy/... ourselves in libc.c
+    gcc -m32 -ffreestanding -fno-builtin -fno-pie -fno-stack-protector -c "$src" -o "$obj"
     OBJECTS+=("$obj")
 done
 

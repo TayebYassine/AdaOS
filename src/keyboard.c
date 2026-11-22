@@ -25,6 +25,12 @@
 #define SCANCODE_RSHIFT 0x36
 #define SCANCODE_CAPSLOCK 0x3A
 
+/* Arrow keys always come with the 0xE0 prefix; these are the second byte. */
+#define SCANCODE_UP 0x48
+#define SCANCODE_DOWN 0x50
+#define SCANCODE_LEFT 0x4B
+#define SCANCODE_RIGHT 0x4D
+
 static int shift_held = 0; /* is either Shift key down right now? */
 static int caps_lock = 0;  /* is Caps Lock toggled on? */
 
@@ -77,15 +83,35 @@ static uint8_t read_scan_code(void) {
     return inb(KEYBOARD_DATA_PORT);
 }
 
-char keyboard_getchar(void) {
+int keyboard_getchar(void) {
     for (;;) {
         uint8_t scancode = read_scan_code();
 
         // Extended keys (arrows, right Ctrl, ...) come as 0xE0 followed by
-        // another byte. We do not support them yet, so throw both away.
+        // another byte. Read both bytes together.
         if (scancode == SCANCODE_EXTENDED) {
-            read_scan_code();
-            continue;
+            uint8_t extended = read_scan_code();
+            int released = (extended & SCANCODE_RELEASED) != 0;
+            extended &= 0x7F; // keep only the key number
+
+            // The arrow keys have no ASCII character: report them as
+            // KEY_* so the shell can browse the command history.
+            if (!released) {
+                if (extended == SCANCODE_UP) {
+                    return KEY_UP;
+                }
+                if (extended == SCANCODE_DOWN) {
+                    return KEY_DOWN;
+                }
+                if (extended == SCANCODE_LEFT) {
+                    return KEY_LEFT;
+                }
+                if (extended == SCANCODE_RIGHT) {
+                    return KEY_RIGHT;
+                }
+            }
+
+            continue; // any other extended key: ignore it
         }
 
         int released = (scancode & SCANCODE_RELEASED) != 0;

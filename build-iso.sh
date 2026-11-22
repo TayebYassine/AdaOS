@@ -16,7 +16,8 @@ nasm -f elf32 "$SRC/boot.asm" -o "$BUILD/boot.o"
 OBJECTS=("$BUILD/boot.o")
 for src in "$SRC"/*.c; do
     obj="$BUILD/$(basename "${src%.c}.o")"
-    gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -c "$src" -o "$obj"
+    # -fno-builtin: we define strlen/memcpy/... ourselves in libc.c
+    gcc -m32 -ffreestanding -fno-builtin -fno-pie -fno-stack-protector -c "$src" -o "$obj"
     OBJECTS+=("$obj")
 done
 ld -m elf_i386 -T "$SRC/linker.ld" \
