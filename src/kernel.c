@@ -3,6 +3,7 @@
 #include "interrupt.h"
 #include "keyboard.h"
 #include "screen.h"
+#include "serial.h"
 #include "shell.h"
 #include "timer.h"
 
@@ -13,6 +14,8 @@
 /* Entry point of AdaOS. */
 void kernel_main(void) {
     interrupt_disable();
+
+    serial_init();
 
     screen_init();
     screen_clear();

@@ -5,10 +5,25 @@
 #include <stdint.h>
 
 #include "screen.h"
+#include "serial.h"
 
 // kprintf: printf for the kernel. Writes straight to the screen
-// through screen.c and understands a small set of format specifiers
-// (%s, %c, %d, %x, %%) - enough for messages that contain numbers.
+// through screen.c and, when COM1 is up, to the serial console too -
+// so the same messages can be watched on the screen or captured to a
+// file. It understands a small set of format specifiers (%s, %c, %d,
+// %x, %%) - enough for messages that contain numbers.
+
+/* Send one character to the screen and to the serial console. */
+static void kputc(char c) {
+    print_char(c);
+    serial_write_char(c);
+}
+
+/* Send a string to the screen and to the serial console. */
+static void kputs(const char* s) {
+    print(s);
+    serial_write(s);
+}
 
 /* Print an unsigned integer in base 10 (no sign, no padding). */
 static void print_uint(unsigned int value) {
@@ -23,7 +38,7 @@ static void print_uint(unsigned int value) {
 
     while (count > 0) {
         count--;
-        print_char(digits[count]);
+        kputc(digits[count]);
     }
 }
 
@@ -32,7 +47,7 @@ static void print_int(int value) {
     unsigned int magnitude = (unsigned int)value;
 
     if (value < 0) {
-        print_char('-');
+        kputc('-');
         magnitude = -magnitude;  // safe even for INT_MIN: unsigned wraps
     }
 
@@ -53,7 +68,7 @@ static void print_hex(unsigned int value) {
 
     while (count > 0) {
         count--;
-        print_char(digits[count]);
+        kputc(digits[count]);
     }
 }
 
@@ -64,7 +79,7 @@ void kprintf(const char* fmt, ...) {
 
     for (int i = 0; fmt[i] != '\0'; i++) {
         if (fmt[i] != '%') {
-            print_char(fmt[i]);
+            kputc(fmt[i]);
             continue;
         }
 
@@ -73,11 +88,11 @@ void kprintf(const char* fmt, ...) {
         switch (fmt[i]) {
             case 's': {
                 const char* s = va_arg(args, const char*);
-                print(s != NULL ? s : "(null)");
+                kputs(s != NULL ? s : "(null)");
                 break;
             }
             case 'c': {
-                print_char((char)va_arg(args, int));
+                kputc((char)va_arg(args, int));
                 break;
             }
             case 'd': {
@@ -89,17 +104,17 @@ void kprintf(const char* fmt, ...) {
                 break;
             }
             case '%': {
-                print_char('%');
+                kputc('%');
                 break;
             }
             case '\0': {
-                print_char('%');
+                kputc('%');
                 va_end(args);
                 return;
             }
             default: {
-                print_char('%');
-                print_char(fmt[i]);
+                kputc('%');
+                kputc(fmt[i]);
                 break;
             }
         }
