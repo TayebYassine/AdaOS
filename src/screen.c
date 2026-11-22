@@ -78,6 +78,36 @@ static void update_cursor(void) {
     outb(0x3D5, (uint8_t)(position & 0xFF));  // write its low byte
 }
 
+/* Move the cursor one cell left (wrapping to the previous row).
+ * Returns 0 if it is already at the top-left corner. */
+static int move_left(void) {
+    if (cursor_col > 0) {
+        cursor_col--;
+    } else if (cursor_row > 0) {
+        cursor_row--;
+        cursor_col = SCREEN_WIDTH - 1;
+    } else {
+        return 0;
+    }
+
+    return 1;
+}
+
+/* Move the cursor one cell right (wrapping to the next row).
+ * Returns 0 if it is already at the bottom-right corner. */
+static int move_right(void) {
+    if (cursor_col < SCREEN_WIDTH - 1) {
+        cursor_col++;
+    } else if (cursor_row < SCREEN_HEIGHT - 1) {
+        cursor_row++;
+        cursor_col = 0;
+    } else {
+        return 0;
+    }
+
+    return 1;
+}
+
 /* Print one character at the cursor, then advance the cursor. */
 static void put_char(char c) {
     if (c == '\n') {
@@ -87,17 +117,9 @@ static void put_char(char c) {
 
     // Backspace: move one cell left, erase it, and stop.
     if (c == '\b') {
-        if (cursor_col > 0) {
-            cursor_col--;
-        } else if (cursor_row > 0) {
-            // We had wrapped to a new line: go to the end of the row above.
-            cursor_row--;
-            cursor_col = SCREEN_WIDTH - 1;
-        } else {
-            return; // top-left corner: nothing left to erase
+        if (move_left()) {
+            put_char_at(cursor_row, cursor_col, ' ', DEFAULT_ATTRIBUTE);
         }
-
-        put_char_at(cursor_row, cursor_col, ' ', DEFAULT_ATTRIBUTE);
         return;
     }
 
@@ -126,5 +148,15 @@ void print(const char* s) {
 
 void print_char(char c) {
     put_char(c);
+    update_cursor();
+}
+
+void cursor_left(void) {
+    move_left();
+    update_cursor();
+}
+
+void cursor_right(void) {
+    move_right();
     update_cursor();
 }

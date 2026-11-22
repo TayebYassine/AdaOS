@@ -10,4 +10,10 @@ void print(const char *s);
 /* Print a single character at the current cursor position. */
 void print_char(char c);
 
+/* Move the cursor one cell left, without erasing anything. */
+void cursor_left(void);
+
+/* Move the cursor one cell right, without erasing anything. */
+void cursor_right(void);
+
 #endif /* ADAOS_SCREEN_H */

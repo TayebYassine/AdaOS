@@ -36,15 +36,20 @@ static void history_push(const char* line) {
 
 /*
  * Read one line from the keyboard. The characters appear on the screen as
- * they are typed and are also stored in the buffer. The Up/Down arrows
- * walk through the command history, Enter finishes the line: we move to
- * a new line and hand the buffer to command_execute().
+ * they are typed and are also stored in the buffer. Left/Right move the
+ * cursor inside the line (typing inserts there, Backspace deletes there),
+ * Up/Down walk through the command history, Enter finishes the line: we
+ * move to a new line and hand the buffer to command_execute().
  */
 static void read_line(char* line) {
     int length = 0;
-    int view = history_count;   // browsing position: history_count = new line
-    char fresh[LINE_MAX];       // what was typed before browsing started
+    int cursor = 0;           // where edits happen: 0..length
+    int view = history_count; // browsing position: history_count = new line
+    char fresh[LINE_MAX];     // what was typed before browsing started
     int fresh_length = 0;
+    int fresh_cursor = 0;     // where the cursor was in that line
+
+    line[0] = '\0';
 
     for (;;) {
         int key = keyboard_getchar();
@@ -57,11 +62,34 @@ static void read_line(char* line) {
             return;
         }
 
-        // Backspace: drop the last character and erase it from the screen.
+        // Backspace: delete the character before the cursor.
         if (key == '\b') {
-            if (length > 0) {
+            if (cursor > 0) {
+                // Shift the rest of the line one position left.
+                for (int i = cursor; i <= length; i++) {
+                    line[i - 1] = line[i]; // includes the '\0'
+                }
                 length--;
-                print_char('\b');
+                cursor--;
+
+                cursor_left();
+                print(line + cursor);
+                print_char(' ');
+                for (int i = cursor; i <= length; i++) {
+                    cursor_left();
+                }
+            }
+            continue;
+        }
+
+        // Left/Right arrows: move the cursor inside the line.
+        if (key == KEY_LEFT || key == KEY_RIGHT) {
+            if (key == KEY_LEFT && cursor > 0) {
+                cursor--;
+                cursor_left();
+            } else if (key == KEY_RIGHT && cursor < length) {
+                cursor++;
+                cursor_right();
             }
             continue;
         }
@@ -74,6 +102,7 @@ static void read_line(char* line) {
                     // First step back: remember the line being typed.
                     memcpy(fresh, line, (size_t)length);
                     fresh_length = length;
+                    fresh_cursor = cursor;
                 }
                 view--;
             } else if (key == KEY_DOWN && view < history_count) {
@@ -82,7 +111,12 @@ static void read_line(char* line) {
                 continue; // nothing to show in that direction
             }
 
-            // Erase the current text after the prompt.
+            // Move to the end of the current line, then erase it all.
+            while (cursor < length) {
+                cursor_right();
+                cursor++;
+            }
+
             for (int i = 0; i < length; i++) {
                 print_char('\b');
             }
@@ -91,26 +125,41 @@ static void read_line(char* line) {
                 // Past the newest entry: restore the line being typed.
                 memcpy(line, fresh, (size_t)fresh_length);
                 length = fresh_length;
+                cursor = fresh_cursor;
             } else {
                 memcpy(line, history_at(view), strlen(history_at(view)) + 1);
                 length = (int)strlen(line);
+                cursor = length;
             }
 
-            // The restore above may have copied fewer bytes than the old
-            // line held, so its '\0' would sit too far back: re-terminate.
             line[length] = '\0';
-
             print(line);
+
+            // A restored line may have had its cursor in the middle.
+            for (int i = cursor; i < length; i++) {
+                cursor_left();
+            }
             continue;
         }
 
         // A normal key (arrows are 0x100+, so they never land here):
-        // store it and show it right away.
+        // insert it at the cursor and show it right away.
         if (key < KEY_UP) {
             if (length < LINE_MAX - 1) {
-                line[length] = (char)key;
+                // Shift the rest of the line one position right.
+                for (int i = length; i >= cursor; i--) {
+                    line[i + 1] = line[i]; // includes the '\0'
+                }
+                line[cursor] = (char)key;
                 length++;
-                print_char((char)key);
+                cursor++;
+
+                // Show the new character and everything that moved right,
+                // then move the cursor back over the shifted tail.
+                print(line + cursor - 1);
+                for (int i = cursor; i < length; i++) {
+                    cursor_left();
+                }
             }
 
             // Otherwise the line is full - ignore the extra keys.
