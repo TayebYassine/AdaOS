@@ -7,4 +7,7 @@ void screen_clear(void);
 /* Print a string at the current cursor position. */
 void print(const char *s);
 
+/* Print a single character at the current cursor position. */
+void print_char(char c);
+
 #endif /* ADAOS_SCREEN_H */

@@ -1,3 +1,4 @@
+#include "io.h"
 #include "screen.h"
 
 #include <stdint.h>
@@ -63,16 +64,6 @@ static void new_line(void) {
 }
 
 /*
- * "outb" = OUT a Byte: send one byte to an I/O port.
- *
- * CPUs have a second address space separate from memory, used to talk to
- * hardware - "I/O ports". The VGA chip listens on ports 0x3D4/0x3D5.
- */
-static void outb(uint16_t port, uint8_t value) {
-    __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-/*
  * Tell the VGA hardware where to draw the blinking cursor.
  * The hardware uses two registers (14 = high byte, 15 = low byte of the
  * cell number) selected via the command port 0x3D4, written through the
@@ -91,6 +82,22 @@ static void update_cursor(void) {
 static void put_char(char c) {
     if (c == '\n') {
         new_line();
+        return;
+    }
+
+    // Backspace: move one cell left, erase it, and stop.
+    if (c == '\b') {
+        if (cursor_col > 0) {
+            cursor_col--;
+        } else if (cursor_row > 0) {
+            // We had wrapped to a new line: go to the end of the row above.
+            cursor_row--;
+            cursor_col = SCREEN_WIDTH - 1;
+        } else {
+            return; // top-left corner: nothing left to erase
+        }
+
+        put_char_at(cursor_row, cursor_col, ' ', DEFAULT_ATTRIBUTE);
         return;
     }
 
@@ -114,5 +121,10 @@ void print(const char* s) {
         put_char(s[i]);
     }
 
+    update_cursor();
+}
+
+void print_char(char c) {
+    put_char(c);
     update_cursor();
 }
