@@ -6,6 +6,9 @@
 /* Send one byte to an I/O port. */
 void outb(uint16_t port, uint8_t value);
 
+/* Send one 16-bit word to an I/O port. */
+void outw(uint16_t port, uint16_t value);
+
 /* Read one byte from an I/O port. */
 uint8_t inb(uint16_t port);
 

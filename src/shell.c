@@ -1,5 +1,6 @@
 #include "shell.h"
 
+#include "command.h"
 #include "keyboard.h"
 #include "screen.h"
 
@@ -7,21 +8,19 @@
 
 /*
  * Read one line from the keyboard. The characters appear on the screen as
- * they are typed and are also stored in a buffer. Pressing Enter finishes
- * the line: we print it back, just like the echo command.
+ * they are typed and are also stored in the buffer. Pressing Enter finishes
+ * the line: we move to a new line and hand the buffer to command_execute().
  */
-static void read_line(void) {
-    char line[LINE_MAX];
+static void read_line(char* line) {
     int length = 0;
 
     for (;;) {
         char c = keyboard_getchar();
 
-        // Enter: terminate the string, move down, echo the line back.
+        // Enter: terminate the string and move down. The typed text is
+        // already on the screen, so there is nothing left to print.
         if (c == '\n') {
             line[length] = '\0';
-            print_char('\n');
-            print(line);
             print_char('\n');
             return;
         }
@@ -47,10 +46,14 @@ static void read_line(void) {
 }
 
 void shell_run(void) {
+    char line[LINE_MAX];
+
     print("Welcome to AdaOS Shell!\n\n");
+    print("Type 'help' to see the available commands.\n\n");
 
     for (;;) {
         print("> ");
-        read_line();
+        read_line(line);
+        command_execute(line);
     }
 }
