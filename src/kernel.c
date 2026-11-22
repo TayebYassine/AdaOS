@@ -4,15 +4,19 @@
 #include "idt.h"
 #include "interrupt.h"
 #include "keyboard.h"
+#include "kmalloc.h"
+#include "paging.h"
 #include "pmm.h"
+#include "scheduler.h"
 #include "screen.h"
 #include "serial.h"
 #include "shell.h"
 #include "timer.h"
 
 // Kernel entry point: brings up the CPU tables (GDT, IDT), the
-// interrupt controller, the memory manager and the drivers, then hands
-// over to the shell. Called once by boot.asm's _start.
+// interrupt controller, the memory layers (physical pages, paging, the
+// heap), the drivers and the scheduler, which then enters the shell.
+// Called once by boot.asm's _start.
 
 /* Entry point of AdaOS. */
 void kernel_main(uint32_t magic, uint32_t info_addr) {
@@ -24,6 +28,8 @@ void kernel_main(uint32_t magic, uint32_t info_addr) {
     screen_clear();
 
     pmm_init(magic, info_addr);
+    paging_init();
+    kmalloc_init();
 
     gdt_init();
     idt_init();
@@ -31,5 +37,7 @@ void kernel_main(uint32_t magic, uint32_t info_addr) {
     timer_init();
     keyboard_init();
 
-    shell_run();
+    scheduler_init();
+
+    scheduler_start();
 }

@@ -3,9 +3,12 @@
 #include <stdint.h>
 
 #include "io.h"
+#include "kmalloc.h"
 #include "kprintf.h"
 #include "libc.h"
+#include "paging.h"
 #include "pmm.h"
+#include "scheduler.h"
 #include "screen.h"
 #include "timer.h"
 
@@ -29,11 +32,13 @@ enum command_id {
     CMD_UPTIME,
     CMD_SLEEP,
     CMD_MEM,
+    CMD_TASKS,
     CMD_NOT_FOUND = -1,
 };
 
-static const char* command_names[] = {"print", "help",   "shutdown", "reboot",
-                                      "clear", "uptime", "sleep",    "mem"};
+static const char* command_names[] = {"print",  "help",  "shutdown",
+                                      "reboot", "clear", "uptime",
+                                      "sleep",  "mem",   "tasks"};
 
 static const char* command_help[] = {
     "print <text> - print text on the screen",
@@ -43,7 +48,8 @@ static const char* command_help[] = {
     "clear        - clear the screen",
     "uptime       - how long AdaOS has been running",
     "sleep <sec>  - pause for a number of seconds",
-    "mem          - show RAM, pages and where the kernel sits"};
+    "mem          - show RAM, paging, the heap and the kernel size",
+    "tasks        - show the running tasks"};
 
 /* Look up a command by name; returns its id or CMD_NOT_FOUND. */
 static int find_command(const char* name) {
@@ -226,6 +232,31 @@ void command_execute(char* line) {
                     (int)memory->total_pages, (int)memory->free_pages,
                     (int)memory->used_pages, PMM_PAGE_SIZE / 1024);
             kprintf("Boot memory map: %d regions\n", (int)memory->region_count);
+
+            const struct paging_stats* vm = paging_get_stats();
+            const struct heap_stats* heap = kmalloc_get_stats();
+
+            kprintf("Identity map: %d KB, %d page tables\n",
+                    (int)(vm->identity_bytes / 1024), (int)vm->page_tables);
+            kprintf("Heap: %d KB mapped, %d KB used, %d blocks\n",
+                    (int)(heap->mapped_bytes / 1024),
+                    (int)(heap->used_bytes / 1024), (int)heap->block_count);
+            break;
+        }
+        case CMD_TASKS: {
+            int count = scheduler_task_count();
+            struct task_info info;
+
+            kprintf("Tasks: %d\n", count);
+
+            for (int i = 0; i < count; i++) {
+                if (scheduler_task_info(i, &info) != 0) {
+                    kprintf("  %s %s %d s\n", info.name, info.state,
+                            (int)(info.runtime_ticks / 100));
+                }
+            }
+
+            kprintf("Idle wakeups: %d\n", (int)scheduler_idle_ticks());
             break;
         }
         case CMD_SLEEP: {
@@ -248,7 +279,7 @@ void command_execute(char* line) {
             }
 
             kprintf("Sleeping for %d seconds...\n", (int)seconds);
-            timer_sleep(seconds * 1000);
+            scheduler_sleep_ms(seconds * 1000);
             print("Done.\n");
             break;
         }

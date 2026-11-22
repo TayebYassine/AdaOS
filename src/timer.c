@@ -4,11 +4,13 @@
 
 #include "interrupt.h"
 #include "io.h"
+#include "scheduler.h"
 
 // The Programmable Interval Timer (PIT) counts down from a value we
 // program and raises IRQ0 every time it reaches zero - one "tick".
 // We ask for 100 ticks per second, and that tick is the kernel's
-// clock: uptime counts them, sleep() waits for enough of them.
+// clock: uptime counts them, sleep() waits for enough of them, and the
+// scheduler gets a chance to switch tasks on every one.
 
 /* Hz the PIT crystal runs at */
 #define PIT_INPUT_FREQUENCY 1193182
@@ -29,10 +31,11 @@
 /* Only IRQ0 writes this, so it is volatile: the compiler must not cache it. */
 static volatile uint32_t tick_count = 0;
 
-/* IRQ0: count one tick; runs in interrupt context, so keep it minimal. */
+/* IRQ0: count one tick and let the scheduler look at the tasks; runs
+ * in interrupt context, so keep it minimal. */
 static void timer_irq(struct interrupt_frame* frame) {
-    (void)frame;
     tick_count++;
+    scheduler_tick(frame);
 }
 
 /* Program the PIT for 100 ticks per second and hook it to IRQ0. */

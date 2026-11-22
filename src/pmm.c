@@ -143,7 +143,7 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
     stats.kernel_end = (uint32_t)kernel_end;
 
     if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
-        kprintf("Physical Memory Manager: not booted by multiboot (magic 0x%x), no memory map\n",
+        kprintf("Physical Memory: not booted by multiboot (magic 0x%x), no memory map\n",
                 magic);
         return;
     }
@@ -179,7 +179,7 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
         stats.total_kb = info->mem_upper + 1024;
         free_region(MULTIBOOT_LOW_MEMORY_END, info->mem_upper * 1024);
     } else {
-        kprintf("Physical Memory Manager: the bootloader gave no memory information\n");
+        kprintf("Physical Memory: the bootloader gave no memory information\n");
         return;
     }
 
@@ -201,8 +201,8 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
     stats.used_pages = stats.total_pages - free_pages;
     stats.available_kb = stats.total_pages * (PMM_PAGE_SIZE / 1024);
 
-    kprintf("Physical Memory Manager: %d KB usable, %d pages, %d free\n", (int)stats.available_kb,
-            (int)stats.total_pages, (int)stats.free_pages);
+    // kprintf("Physical Memory: %d KB usable, %d pages, %d free\n", (int)stats.available_kb,
+    //        (int)stats.total_pages, (int)stats.free_pages);
 }
 
 /* Reserve one free page; 0 means out of memory. Page 0 is never

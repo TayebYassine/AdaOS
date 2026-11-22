@@ -4,6 +4,7 @@
 
 #include "kprintf.h"
 #include "pic.h"
+#include "scheduler.h"
 #include "screen.h"
 
 // The C half of the interrupt machinery. isr.asm saves the registers
@@ -54,11 +55,23 @@ static const char* exception_names[32] = {
     "Reserved",                    /* 0x1F */
 };
 
+/* Read CR2: the address of the fault that raised vector 14. */
+static uint32_t read_cr2(void) {
+    uint32_t value;
+    __asm__ volatile("mov %%cr2, %0" : "=r"(value));
+    return value;
+}
+
 /* Report the exception and halt; there is nothing safe to return to. */
 static void handle_exception(struct interrupt_frame* frame) {
     kprintf("\nAdaOS: exception %d (%s)\n", (int)frame->int_number,
             exception_names[frame->int_number]);
     kprintf("  error code 0x%x   eip 0x%x\n", frame->error_code, frame->eip);
+
+    if (frame->int_number == 14) {
+        kprintf("  faulting address 0x%x\n", read_cr2());
+    }
+
     print("System halted.\n");
 
     for (;;) {
@@ -84,6 +97,10 @@ void interrupt_handler(struct interrupt_frame* frame) {
     }
 
     pic_send_eoi(irq);
+
+    if (scheduler_should_switch()) {
+        scheduler_switch_from(frame);
+    }
 }
 
 /* Remember "handler" for irq and open that line on the PIC. */
