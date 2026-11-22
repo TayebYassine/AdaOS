@@ -19,6 +19,14 @@
 /* Bright white text on a black background */
 #define DEFAULT_ATTRIBUTE 0x0F
 
+/* CRTC registers for the cursor's shape and visibility */
+#define CRTC_CURSOR_START 0x0A
+#define CRTC_CURSOR_END 0x0B
+
+/* Index port of the CRT controller (0x3D4/0x3D5 on colour text mode) */
+#define CRTC_INDEX_PORT 0x3D4
+#define CRTC_DATA_PORT 0x3D5
+
 static int cursor_row = 0;
 static int cursor_col = 0;
 
@@ -72,10 +80,19 @@ static void new_line(void) {
 static void update_cursor(void) {
     uint16_t position = (uint16_t)cell_index(cursor_row, cursor_col);
 
-    outb(0x3D4, 14);
-    outb(0x3D5, (uint8_t)(position >> 8));
-    outb(0x3D4, 15);
-    outb(0x3D5, (uint8_t)(position & 0xFF));
+    outb(CRTC_INDEX_PORT, 14);
+    outb(CRTC_DATA_PORT, (uint8_t)(position >> 8));
+    outb(CRTC_INDEX_PORT, 15);
+    outb(CRTC_DATA_PORT, (uint8_t)(position & 0xFF));
+}
+
+/* Set the hardware cursor's shape: scanlines 14-15 of the character cell, i.e.
+ * a blinking underscore. */
+void screen_init(void) {
+    outb(CRTC_INDEX_PORT, CRTC_CURSOR_START);
+    outb(CRTC_DATA_PORT, 0x0E);
+    outb(CRTC_INDEX_PORT, CRTC_CURSOR_END);
+    outb(CRTC_DATA_PORT, 0x0F);
 }
 
 /* Move one cell left; returns 0 at the top-left corner. */

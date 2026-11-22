@@ -14,6 +14,7 @@
 void kernel_main(void) {
     interrupt_disable();
 
+    screen_init();
     screen_clear();
 
     gdt_init();
