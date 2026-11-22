@@ -1,13 +1,23 @@
-#include "io.h"
 #include "screen.h"
 
 #include <stdint.h>
 
-#define SCREEN_WIDTH 80    /* Number of character columns */
-#define SCREEN_HEIGHT 25   /* Number of character rows */
-#define VGA_MEMORY 0xB8000 /* Physical address of the VGA text buffer */
+#include "io.h"
 
-#define DEFAULT_ATTRIBUTE 0x0F /* Bright white text on a black background */
+// VGA text-mode screen driver: writes characters into the text buffer
+// at 0xB8000 (80x25 cells, one word each: character + color), tracks
+// the cursor, scrolls at the bottom edge, and keeps the hardware
+// cursor on screen.
+
+/* Number of character columns */
+#define SCREEN_WIDTH 80
+/* Number of character rows */
+#define SCREEN_HEIGHT 25
+/* Physical address of the VGA text buffer */
+#define VGA_MEMORY 0xB8000
+
+/* Bright white text on a black background */
+#define DEFAULT_ATTRIBUTE 0x0F
 
 static int cursor_row = 0;
 static int cursor_col = 0;
@@ -35,14 +45,12 @@ static void clear_cells(void) {
 static void scroll(void) {
     volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;
 
-    // Copy row 1 -> row 0, row 2 -> row 1, ... row 24 -> row 23
     for (int row = 1; row < SCREEN_HEIGHT; row++) {
         for (int col = 0; col < SCREEN_WIDTH; col++) {
             vga[cell_index(row - 1, col)] = vga[cell_index(row, col)];
         }
     }
 
-    // Blank out the now-empty last row.
     for (int col = 0; col < SCREEN_WIDTH; col++) {
         put_char_at(SCREEN_HEIGHT - 1, col, ' ', DEFAULT_ATTRIBUTE);
     }
@@ -50,10 +58,7 @@ static void scroll(void) {
     cursor_row = SCREEN_HEIGHT - 1;
 }
 
-/*
- * Go to the start of the next line. If we were already on the last line,
- * the screen scrolls instead of moving further down.
- */
+/* Go to the start of the next line, scrolling if already at the bottom. */
 static void new_line(void) {
     cursor_col = 0;
     cursor_row++;
@@ -63,23 +68,17 @@ static void new_line(void) {
     }
 }
 
-/*
- * Tell the VGA hardware where to draw the blinking cursor.
- * The hardware uses two registers (14 = high byte, 15 = low byte of the
- * cell number) selected via the command port 0x3D4, written through the
- * data port 0x3D5.
- */
+/* Tell the VGA hardware where to draw the cursor. */
 static void update_cursor(void) {
     uint16_t position = (uint16_t)cell_index(cursor_row, cursor_col);
 
-    outb(0x3D4, 14);                          // select "cursor location high"
-    outb(0x3D5, (uint8_t)(position >> 8));    // write its high byte
-    outb(0x3D4, 15);                          // select "cursor location low"
-    outb(0x3D5, (uint8_t)(position & 0xFF));  // write its low byte
+    outb(0x3D4, 14);
+    outb(0x3D5, (uint8_t)(position >> 8));
+    outb(0x3D4, 15);
+    outb(0x3D5, (uint8_t)(position & 0xFF));
 }
 
-/* Move the cursor one cell left (wrapping to the previous row).
- * Returns 0 if it is already at the top-left corner. */
+/* Move one cell left; returns 0 at the top-left corner. */
 static int move_left(void) {
     if (cursor_col > 0) {
         cursor_col--;
@@ -93,8 +92,7 @@ static int move_left(void) {
     return 1;
 }
 
-/* Move the cursor one cell right (wrapping to the next row).
- * Returns 0 if it is already at the bottom-right corner. */
+/* Move one cell right; returns 0 at the bottom-right corner. */
 static int move_right(void) {
     if (cursor_col < SCREEN_WIDTH - 1) {
         cursor_col++;
@@ -131,6 +129,7 @@ static void put_char(char c) {
     }
 }
 
+/* Blank the whole screen and put the cursor back at the top-left. */
 void screen_clear(void) {
     clear_cells();
     cursor_row = 0;
@@ -138,6 +137,7 @@ void screen_clear(void) {
     update_cursor();
 }
 
+/* Print a string at the cursor. */
 void print(const char* s) {
     for (int i = 0; s[i] != '\0'; i++) {
         put_char(s[i]);
@@ -146,16 +146,19 @@ void print(const char* s) {
     update_cursor();
 }
 
+/* Print one character at the cursor. */
 void print_char(char c) {
     put_char(c);
     update_cursor();
 }
 
+/* Move the cursor one cell left, without erasing anything. */
 void cursor_left(void) {
     move_left();
     update_cursor();
 }
 
+/* Move the cursor one cell right, without erasing anything. */
 void cursor_right(void) {
     move_right();
     update_cursor();

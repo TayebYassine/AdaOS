@@ -1,14 +1,18 @@
 #include "kprintf.h"
 
-#include "screen.h"
-
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 
+#include "screen.h"
+
+// kprintf: printf for the kernel. Writes straight to the screen
+// through screen.c and understands a small set of format specifiers
+// (%s, %c, %d, %x, %%) - enough for messages that contain numbers.
+
 /* Print an unsigned integer in base 10 (no sign, no padding). */
 static void print_uint(unsigned int value) {
-    char digits[10]; // enough for "4294967295"
+    char digits[10];  // enough for "4294967295"
     int count = 0;
 
     do {
@@ -29,7 +33,7 @@ static void print_int(int value) {
 
     if (value < 0) {
         print_char('-');
-        magnitude = -magnitude; // safe even for INT_MIN: unsigned wraps
+        magnitude = -magnitude;  // safe even for INT_MIN: unsigned wraps
     }
 
     print_uint(magnitude);
@@ -38,7 +42,7 @@ static void print_int(int value) {
 /* Print an unsigned integer in lowercase hexadecimal. */
 static void print_hex(unsigned int value) {
     const char* hex = "0123456789abcdef";
-    char digits[8]; // enough for "ffffffff"
+    char digits[8];  // enough for "ffffffff"
     int count = 0;
 
     do {
@@ -53,6 +57,7 @@ static void print_hex(unsigned int value) {
     }
 }
 
+/* Print fmt, substituting the varargs at each '%' specifier. */
 void kprintf(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -63,34 +68,40 @@ void kprintf(const char* fmt, ...) {
             continue;
         }
 
-        i++; // skip the '%'
+        i++;  // skip the '%'
 
         switch (fmt[i]) {
-        case 's': {
-            const char* s = va_arg(args, const char*);
-            print(s != NULL ? s : "(null)");
-            break;
-        }
-        case 'c':
-            print_char((char)va_arg(args, int));
-            break;
-        case 'd':
-            print_int(va_arg(args, int));
-            break;
-        case 'x':
-            print_hex(va_arg(args, unsigned int));
-            break;
-        case '%':
-            print_char('%');
-            break;
-        case '\0':
-            print_char('%');
-            va_end(args);
-            return;
-        default:
-            print_char('%');
-            print_char(fmt[i]);
-            break;
+            case 's': {
+                const char* s = va_arg(args, const char*);
+                print(s != NULL ? s : "(null)");
+                break;
+            }
+            case 'c': {
+                print_char((char)va_arg(args, int));
+                break;
+            }
+            case 'd': {
+                print_int(va_arg(args, int));
+                break;
+            }
+            case 'x': {
+                print_hex(va_arg(args, unsigned int));
+                break;
+            }
+            case '%': {
+                print_char('%');
+                break;
+            }
+            case '\0': {
+                print_char('%');
+                va_end(args);
+                return;
+            }
+            default: {
+                print_char('%');
+                print_char(fmt[i]);
+                break;
+            }
         }
     }
 

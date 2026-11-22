@@ -11,9 +11,14 @@ ISO_OUT="$ROOT/adaos.iso"
 mkdir -p "$BUILD"
 
 echo "[1/4] Building kernel.elf..."
-nasm -f elf32 "$SRC/boot.asm" -o "$BUILD/boot.o"
+# Assemble every .asm file in src/ into a matching .o in build/
+OBJECTS=()
+for src in "$SRC"/*.asm; do
+    obj="$BUILD/$(basename "${src%.asm}.o")"
+    nasm -f elf32 "$src" -o "$obj"
+    OBJECTS+=("$obj")
+done
 # Compile every .c file in src/ into a matching .o in build/
-OBJECTS=("$BUILD/boot.o")
 for src in "$SRC"/*.c; do
     obj="$BUILD/$(basename "${src%.c}.o")"
     # -fno-builtin: we define strlen/memcpy/... ourselves in libc.c

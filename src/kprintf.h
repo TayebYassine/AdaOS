@@ -1,11 +1,7 @@
 #ifndef ADAOS_KPRINTF_H
 #define ADAOS_KPRINTF_H
 
-/*
- * Kernel printf: like printf, but writes to the screen. Supports the
- * format specifiers %s (string), %c (character), %d (decimal),
- * %x (hexadecimal) and %% (a literal '%').
- */
+/* Print "fmt" to the screen: %s, %c, %d, %x and %%. */
 void kprintf(const char* fmt, ...);
 
 #endif /* ADAOS_KPRINTF_H */

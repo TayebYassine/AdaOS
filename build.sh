@@ -8,12 +8,17 @@ BUILD="$ROOT/build"
 
 mkdir -p "$BUILD"
 
-echo "[1/4] Assembling boot.asm..."
-nasm -f elf32 "$SRC/boot.asm" -o "$BUILD/boot.o"
+echo "[1/4] Assembling .asm sources..."
+# Assemble every .asm file in src/ into a matching .o in build/
+OBJECTS=()
+for src in "$SRC"/*.asm; do
+    obj="$BUILD/$(basename "${src%.asm}.o")"
+    nasm -f elf32 "$src" -o "$obj"
+    OBJECTS+=("$obj")
+done
 
 echo "[2/4] Compiling C sources..."
 # Compile every .c file in src/ into a matching .o in build/
-OBJECTS=("$BUILD/boot.o")
 for src in "$SRC"/*.c; do
     obj="$BUILD/$(basename "${src%.c}.o")"
     # -fno-builtin: we define strlen/memcpy/... ourselves in libc.c

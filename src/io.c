@@ -1,24 +1,23 @@
 #include "io.h"
 
-/*
- * "outb" = OUT a Byte, "outw" = OUT a Word (16 bits), "inb" = IN a Byte:
- * send/receive a value to/from an I/O port. CPUs have a second address
- * space separate from memory, used to talk to hardware. The VGA chip
- * listens on ports 0x3D4/0x3D5, the keyboard controller on ports
- * 0x60/0x64, and the ACPI power button on port 0x604.
- *
- * This is GCC inline assembly: "a" puts the value in register AL/AX,
- * "Nd" is the port number, "=a" reads the result back from AL, and
- * "volatile" forbids the compiler from removing or reordering it.
- */
+// Port I/O: "outb" = OUT a Byte, "outw" = OUT a Word, "inb" = IN a
+// Byte. CPUs have a second address space separate from memory, used
+// to talk to hardware: the VGA chip listens on 0x3D4/0x3D5, the
+// keyboard controller on 0x60/0x64, the ACPI power button on 0x604.
+// These are GCC inline assembly instructions, marked "volatile" so
+// the compiler can neither remove nor reorder them.
+
+/* Send one byte to an I/O port. */
 void outb(uint16_t port, uint8_t value) {
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
+/* Send one 16-bit word to an I/O port. */
 void outw(uint16_t port, uint16_t value) {
     __asm__ volatile("outw %0, %1" : : "a"(value), "Nd"(port));
 }
 
+/* Read one byte from an I/O port. */
 uint8_t inb(uint16_t port) {
     uint8_t value;
     __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port));

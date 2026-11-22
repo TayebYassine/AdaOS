@@ -19,6 +19,8 @@ AdaOS is a tiny command-line operating system for 32-bit x86, written in C and A
 | `clear`    | Clear the screen            |
 | `reboot`   | Restart the machine         |
 | `shutdown` | Power off the machine       |
+| `uptime`   | Show how long AdaOS has been running |
+| `sleep`    | Pause for a number of seconds |
 
 ## Building
 

@@ -1,3 +1,7 @@
+; Multiboot entry point: GRUB loads this file, and _start sets up the
+; stack and calls kernel_main() in kernel.c. Everything else is brought
+; up from C.
+
 MAGIC    equ 0x1BADB002
 FLAGS    equ 0
 CHECKSUM equ -(MAGIC + FLAGS)
@@ -10,7 +14,7 @@ align 4
 
 section .bss
 align 16
-stack_bottom: resb 16384
+stack_bottom: resb 16384   ; 16 KB stack for the kernel
 stack_top:
 
 section .text
@@ -21,5 +25,5 @@ _start:
     call kernel_main
 .hang:
     cli
-    hlt
+    hlt                    ; kernel_main returned, which it never should
     jmp .hang

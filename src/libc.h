@@ -1,7 +1,7 @@
 #ifndef ADAOS_LIBC_H
 #define ADAOS_LIBC_H
 
-#include <stddef.h> /* size_t */
+#include <stddef.h>
 
 /* Length of a string, not counting the ending '\0'. */
 size_t strlen(const char* s);
