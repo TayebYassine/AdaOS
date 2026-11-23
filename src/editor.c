@@ -14,21 +14,25 @@
 // when the editor closes, so "write" leaves the shell exactly as it found
 // it. While it runs the screen is repainted from three parts:
 //
-//   row 0         title bar with the file's name
+//   row 0         title bar: "Editing <name> - <bytes> bytes"
 //   rows 1-23     the text itself
-//   row 24        status bar: ^S and ^E on the left, the size on the right
+//   row 24        status bar: ^S and ^E on the left, the paging markers
+//                 "<" and ">" on the right
 //
 // The text is kept as an array of fixed-width lines, one screen row each.
-// That costs horizontal scrolling - a line is as wide as the screen - but
-// it makes the cursor and the vertical paging simple: moving the cursor
-// below the last visible row scrolls the view down by one line, exactly
-// like a terminal.
+// A line may be wider than the screen, so the view has a horizontal
+// offset (first_col) beside the vertical one (first_line): moving the
+// cursor past either edge scrolls the view by one line or column, exactly
+// like a terminal. The status bar says whether anything is hidden off
+// screen: "<" when the view starts inside a line, ">" when a line runs
+// past the right edge.
 
 #define TEXT_TOP 1
 #define TEXT_ROWS (SCREEN_ROWS - 2)
+#define TEXT_COLS SCREEN_COLS
 
 #define MAX_LINES 200
-#define LINE_MAX (SCREEN_COLS - 1)
+#define LINE_MAX 255
 #define LINE_SIZE (LINE_MAX + 1)
 
 #define COLOR_TEXT 0x0F
@@ -43,6 +47,7 @@ static uint32_t line_count = 1;
 static uint32_t cursor_line = 0;
 static uint32_t cursor_col = 0;
 static uint32_t first_line = 0;
+static uint32_t first_col = 0;
 
 static char note[24] = "";
 
@@ -94,6 +99,16 @@ static uint32_t number_to_text(uint32_t value, char* out) {
     return length;
 }
 
+/* Put "text" on the end of "out"; returns the new length. */
+static uint32_t append_text(char* out, uint32_t length, const char* text) {
+    for (uint32_t i = 0; text[i] != '\0'; i++) {
+        out[length] = text[i];
+        length++;
+    }
+
+    return length;
+}
+
 /* The file's name for the title bar: whatever follows the last slash. */
 static void set_title(const char* file) {
     const char* name = file;
@@ -120,13 +135,27 @@ static void set_title(const char* file) {
     title[length] = '\0';
 }
 
-/* Draw the title bar: the file's name, black on white. */
+/* Draw the title bar: "Editing <name> - <bytes> bytes", black on white. */
 static void draw_title(void) {
+    char number[10];
+    char text[64];
+    uint32_t bytes = total_bytes();
+    uint32_t length = 0;
+
+    number_to_text(bytes, number);
+
+    length = append_text(text, length, "Editing ");
+    length = append_text(text, length, title);
+    length = append_text(text, length, " - ");
+    length = append_text(text, length, number);
+    length = append_text(text, length, (bytes == 1) ? " byte" : " bytes");
+    text[length] = '\0';
+
     screen_fill_row(0, ' ', COLOR_BAR);
-    screen_puts_at(0, 0, title, COLOR_BAR);
+    screen_puts_at(0, 0, text, COLOR_BAR);
 }
 
-/* Draw the visible lines, blank where the file has ended. */
+/* Draw the visible lines from first_col on, blank where the file ends. */
 static void draw_text(void) {
     for (int row = 0; row < TEXT_ROWS; row++) {
         uint32_t index = first_line + (uint32_t)row;
@@ -135,46 +164,64 @@ static void draw_text(void) {
         screen_fill_row(screen_row, ' ', COLOR_TEXT);
 
         if (index < line_count) {
-            screen_puts_at(screen_row, 0, line_at(index), COLOR_TEXT);
+            const char* line = line_at(index);
+            uint32_t length = line_length(index);
+
+            for (int col = 0; col < TEXT_COLS; col++) {
+                uint32_t source = first_col + (uint32_t)col;
+
+                if (source >= length) {
+                    break;
+                }
+
+                screen_put_at(screen_row, col, line[source], COLOR_TEXT);
+            }
         }
     }
 }
 
-/* Draw the status bar: shortcuts on the left, size on the right. */
+/* Does any line run past the right edge of the view? */
+static int hidden_on_right(void) {
+    for (uint32_t i = 0; i < line_count; i++) {
+        if (line_length(i) > first_col + TEXT_COLS) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/* Draw the status bar: shortcuts on the left, paging markers on the right. */
 static void draw_status(void) {
-    char number[10];
-    char text[20];
-    uint32_t bytes = total_bytes();
-    uint32_t digits = number_to_text(bytes, number);
-    uint32_t length = 0;
-    const char* unit = (bytes == 1) ? " byte" : " bytes";
-
-    for (uint32_t i = 0; i < digits; i++) {
-        text[length] = number[i];
-        length++;
-    }
-    for (uint32_t i = 0; unit[i] != '\0'; i++) {
-        text[length] = unit[i];
-        length++;
-    }
-    text[length] = '\0';
-
     screen_fill_row(SCREEN_ROWS - 1, ' ', COLOR_BAR);
     screen_puts_at(SCREEN_ROWS - 1, 0, "^S write   ^E exit", COLOR_BAR);
-    screen_puts_at(SCREEN_ROWS - 1, SCREEN_COLS - (int)length, text, COLOR_BAR);
+
+    if (first_col > 0) {
+        screen_put_at(SCREEN_ROWS - 1, SCREEN_COLS - 2, '<', COLOR_BAR);
+    }
+    if (hidden_on_right()) {
+        screen_put_at(SCREEN_ROWS - 1, SCREEN_COLS - 1, '>', COLOR_BAR);
+    }
 
     if (note[0] != '\0') {
         screen_puts_at(SCREEN_ROWS - 1, 24, note, COLOR_BAR);
     }
 }
 
-/* Keep the cursor on screen by paging the view one line at a time. */
+/* Keep the cursor on screen by paging the view one line or column at a time. */
 static void keep_cursor_visible(void) {
     if (cursor_line < first_line) {
         first_line = cursor_line;
     }
     if (cursor_line >= first_line + TEXT_ROWS) {
         first_line = cursor_line - TEXT_ROWS + 1;
+    }
+
+    if (cursor_col < first_col) {
+        first_col = cursor_col;
+    }
+    if (cursor_col >= first_col + TEXT_COLS) {
+        first_col = cursor_col - TEXT_COLS + 1;
     }
 }
 
@@ -186,7 +233,8 @@ static void render(void) {
     draw_text();
     draw_status();
 
-    screen_move_to(TEXT_TOP + (int)(cursor_line - first_line), (int)cursor_col);
+    screen_move_to(TEXT_TOP + (int)(cursor_line - first_line),
+                   (int)(cursor_col - first_col));
 }
 
 /* Split the file into lines; a final newline starts an empty last line. */
@@ -430,6 +478,7 @@ void editor_open(const char* file) {
     cursor_line = 0;
     cursor_col = 0;
     first_line = 0;
+    first_col = 0;
     load_file(node);
 
     screen_save(saved_cells, &saved_row, &saved_col);

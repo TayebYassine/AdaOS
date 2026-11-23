@@ -345,8 +345,8 @@ int diskfs_init(void) {
 
     if (super_load()) {
         if (diskfs_load()) {
-            kprintf("Disk: %s, %d MB, %d entries restored\n", ata_model(),
-                    (int)(ata_sector_count() / 2048), (int)saved_entries);
+            // kprintf("Disk: %s, %d MB, %d entries restored\n", ata_model(),
+            //        (int)(ata_sector_count() / 2048), (int)saved_entries);
             return 1;
         }
 
@@ -365,8 +365,9 @@ int diskfs_init(void) {
     }
 
     fs_mark_clean();
-    kprintf("Disk: %s, %d MB, file system created\n", ata_model(),
-            (int)(ata_sector_count() / 2048));
+    
+    //kprintf("Disk: %s, %d MB, file system created\n", ata_model(),
+    //        (int)(ata_sector_count() / 2048));
 
     return 1;
 }
