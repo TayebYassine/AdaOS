@@ -6,6 +6,12 @@
 
 AdaOS is a tiny command-line operating system for 32-bit x86, written in C and Assembly. It boots through GRUB and drops you into a DOS-style shell.
 
+<p align="center">
+  <img src="./shell.png" alt="Shell of AdaOS">
+</p>
+
+<p align="center">Shell of AdaOS, since the commit <a href="https://github.com/TayebYassine/AdaOS/commit/e2afe864216822b3299b83d69f097a2bba21f8e5"> e2afe86</a>.</p>
+
 > [!CAUTION]
 > AdaOS is a hobby project, not an official product. It's experimental and may have bugs.
 > Run it in a virtual machine such as [VirtualBox](https://www.virtualbox.org/) or [QEMU](https://www.qemu.org/) rather than on real hardware.
