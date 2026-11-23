@@ -326,6 +326,16 @@ void fs_mark_clean(void) {
  * which walks it from the shell, relies on that. */
 struct fs_node* fs_root(void) { return root; }
 
+int fs_node_path(struct fs_node* node, char* out) {
+    int ok;
+
+    spinlock_acquire(&tree_lock);
+    ok = node_path(node, out);
+    spinlock_release(&tree_lock);
+
+    return ok;
+}
+
 /* The body of fs_resolve(), which runs with the tree lock held. */
 static struct fs_node* resolve_tree(const char* path) {
     char abs[FS_PATH_MAX];

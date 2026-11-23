@@ -18,6 +18,7 @@
 #include "shell.h"
 #include "snake.h"
 #include "timer.h"
+#include "version.h"
 
 // The shell's command dispatcher: splits the typed line into words,
 // looks the first one up, and runs the matching command.
@@ -51,25 +52,32 @@ enum command_id {
     CMD_RM,
     CMD_MV,
     CMD_CP,
+    CMD_FIND,
+    CMD_TREE,
     CMD_DISK,
     CMD_TIME,
+    CMD_CAL,
     CMD_SETTIME,
     CMD_SETDATE,
+    CMD_VER,
     CMD_SNAKE,
     CMD_NOT_FOUND = -1,
 };
 
 static const char* command_names[] = {
-    "print", "help", "shutdown", "reboot", "clear",   "uptime",  "sleep", "mem",
-    "tasks", "ls",   "cd",       "pwd",    "cat",     "write",   "mkdir", "rm",
-    "mv",    "cp",   "disk",     "time",   "settime", "setdate", "snake"};
+    "print", "help",  "shutdown", "reboot",  "clear", "uptime", "sleep",
+    "mem",   "tasks", "ls",       "cd",      "pwd",   "cat",    "write",
+    "mkdir", "rm",    "mv",       "cp",      "find",  "tree",   "disk",
+    "time",  "cal",   "settime",  "setdate", "ver",   "snake"};
 
 static const char* command_help[] = {
+    "cal            - show this month's calendar",
     "cat <path>     - print a file",
     "cd <path>      - change the current directory",
     "clear          - clear the screen",
     "cp <src> <dst> - copy a file or directory",
     "disk           - show the disk and its file system",
+    "find <name>    - find files whose name contains <name>",
     "help [page]    - show this list of commands",
     "ls [path]      - list a directory",
     "mem            - show RAM, paging, the heap and the kernel size",
@@ -86,7 +94,9 @@ static const char* command_help[] = {
     "snake          - play the snake game",
     "tasks          - show the running tasks",
     "time           - show the date and the time",
+    "tree [path]    - show a directory as a tree",
     "uptime         - how long AdaOS has been running",
+    "ver            - show the AdaOS version",
     "write <file>   - edit a file"};
 
 /* Look up a command by name; returns its id or CMD_NOT_FOUND. */
@@ -229,6 +239,71 @@ static void command_reboot(void) {
     }
 }
 
+/* Look under "node" for names holding "pattern", printing the path of
+ * each match; returns how many were found. */
+static int find_walk(struct fs_node* node, const char* pattern) {
+    char path[FS_PATH_MAX];
+    int found = 0;
+
+    if (strstr(node->name, pattern) != 0 && fs_node_path(node, path)) {
+        kprintf("%s\n", path);
+        found++;
+    }
+
+    for (struct fs_node* child = node->children; child != 0;
+         child = child->sibling) {
+        found += find_walk(child, pattern);
+    }
+
+    return found;
+}
+
+/* Room for the branches above the deepest entry the shell will draw:
+ * four characters per level, deep enough for any path that fits. */
+#define TREE_PREFIX_MAX 256
+
+// The branch pieces, as the CP437 glyphs the VGA text font draws: the
+// "├──" and "└──" in front of an entry, and the "│" that keeps the
+// levels above it connected. Each is four cells wide.
+#define TREE_TEE "\xC3\xC4\xC4 "
+#define TREE_ELBOW "\xC0\xC4\xC4 "
+#define TREE_BAR "\xB3   "
+#define TREE_GAP "    "
+
+/* Draw everything under "dir", indenting each level with the branches
+ * built up in "prefix"; "len" is how much of it is in use. */
+static void tree_walk(struct fs_node* dir, char* prefix, int len) {
+    for (struct fs_node* node = dir->children; node != 0;
+         node = node->sibling) {
+        int last = (node->sibling == 0);
+        int next = len;
+
+        print(prefix);
+        print(last ? TREE_ELBOW : TREE_TEE);
+        print(node->name);
+        if (node->kind == FS_DIR) {
+            print_char('/');
+        }
+        print_char('\n');
+
+        if (node->kind != FS_DIR || node->children == 0) {
+            continue;
+        }
+
+        if (len + 4 < TREE_PREFIX_MAX) {
+            memcpy(prefix + len, last ? TREE_GAP : TREE_BAR, 4);
+            prefix[len + 4] = '\0';
+            next = len + 4;
+        }
+
+        tree_walk(node, prefix, next);
+
+        /* Drop the branch the children added, so the next sibling is
+         * drawn at this level and not one level deeper. */
+        prefix[len] = '\0';
+    }
+}
+
 /* Split the line into words and run the command the first one names. */
 void command_execute(char* line) {
     char* words[MAX_WORDS];
@@ -283,6 +358,10 @@ void command_execute(char* line) {
                 print("  ");
                 print(command_help[i]);
                 print_char('\n');
+            }
+
+            if ((int)page == total_pages) {
+                kprintf("\n  AdaOS version: %s\n", ADAOS_VERSION);
             }
             break;
         }
@@ -478,6 +557,49 @@ void command_execute(char* line) {
             }
             fs_copy(words[1], words[2]);
             break;
+        case CMD_FIND: {
+            int found = 0;
+
+            if (count != 2) {
+                print("Usage: find <name>\n");
+                break;
+            }
+
+            for (struct fs_node* node = fs_root()->children; node != 0;
+                 node = node->sibling) {
+                found += find_walk(node, words[1]);
+            }
+
+            if (found == 0) {
+                print("No matches.\n");
+            }
+            break;
+        }
+        case CMD_TREE: {
+            const char* shown;
+            struct fs_node* dir;
+            char prefix[TREE_PREFIX_MAX] = "";
+
+            if (count > 2) {
+                print("Usage: tree [path]\n");
+                break;
+            }
+
+            shown = (count == 2) ? words[1] : fs_cwd();
+            dir = fs_resolve(shown);
+
+            if (dir == 0) {
+                break;
+            }
+            if (dir->kind != FS_DIR) {
+                print("Error: that path is not a directory.\n");
+                break;
+            }
+
+            kprintf("%s\n", shown);
+            tree_walk(dir, prefix, 0);
+            break;
+        }
         case CMD_DISK: {
             if (!diskfs_present()) {
                 print("No disk on the primary IDE bus.\n");
@@ -498,6 +620,51 @@ void command_execute(char* line) {
 
             clock_stamp(stamp, 1);
             kprintf("%s\n", stamp);
+            break;
+        }
+        case CMD_CAL: {
+            static const char* months[] = {"January", "February", "March",
+                                           "April",   "May",      "June",
+                                           "July",    "August",   "September",
+                                           "October", "November", "December"};
+            struct clock_time time;
+            int title_len;
+            int first;
+            int days;
+
+            clock_get(&time);
+
+            title_len = (int)strlen(months[time.month - 1]) + 1;
+            for (int y = time.year; y != 0; y /= 10) {
+                title_len++;
+            }
+            for (int i = 0; i < (20 - title_len) / 2; i++) {
+                print_char(' ');
+            }
+            kprintf("%s %d\n", months[time.month - 1], time.year);
+
+            print("Su Mo Tu We Th Fr Sa\n");
+
+            first = clock_day_of_week(time.year, time.month, 1) - 1;
+            days = clock_days_in_month(time.year, time.month);
+
+            for (int i = 0; i < first; i++) {
+                print("   ");
+            }
+
+            for (int day = 1; day <= days; day++) {
+                int column = (first + day - 1) % 7;
+
+                if (day > 1) {
+                    print_char((column == 0) ? '\n' : ' ');
+                }
+                if (day < 10) {
+                    print_char(' ');
+                }
+                kprintf("%d", day);
+            }
+
+            print_char('\n');
             break;
         }
         case CMD_SETTIME: {
@@ -565,6 +732,9 @@ void command_execute(char* line) {
             print("Date set.\n");
             break;
         }
+        case CMD_VER:
+            kprintf("%s\n", ADAOS_VERSION);
+            break;
         case CMD_SNAKE:
             snake_run();
             break;

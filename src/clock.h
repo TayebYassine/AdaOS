@@ -35,6 +35,9 @@ int clock_set_date(int year, int month, int day);
 /* How many days a month has; February gets 29 in a leap year. */
 int clock_days_in_month(int year, int month);
 
+/* What day of the week a date falls on: 1 = Sunday, 7 = Saturday. */
+int clock_day_of_week(int year, int month, int day);
+
 /* Write the date and time into out, as "MM-DD-YYYY HH:MM:SS". With ampm
  * set the hour becomes 12-hour with a trailing " AM" or " PM" instead,
  * so out needs 23 bytes - 24 to be safe. */

@@ -7,14 +7,23 @@
 AdaOS is a tiny command-line operating system for 32-bit x86, written in C and Assembly. It boots through GRUB and drops you into a DOS-style shell.
 
 <p align="center">
-  <img src="./shell.png" alt="Shell of AdaOS">
+  <img src="./shell.gif" alt="Shell of AdaOS">
 </p>
-
-<p align="center">Shell of AdaOS, since the commit <a href="https://github.com/TayebYassine/AdaOS/commit/e2afe864216822b3299b83d69f097a2bba21f8e5"> e2afe86</a>.</p>
 
 > [!CAUTION]
 > AdaOS is still experimental and may have bugs. Please report if you encounter any.
 > Run it in a virtual machine such as [VirtualBox](https://www.virtualbox.org/) or [QEMU](https://www.qemu.org/) rather than on real hardware.
+
+## Features
+
+- **DOS-style shell**: An 80x25 text shell that parses command lines, runs the built-in commands and documents them through `help`.
+- **File system on disk**: A hierarchical tree of files and directories stored on the first IDE disk through the ATA driver, with `ls`, `cd`, `cat`, `mkdir`, `cp`, `mv`, `rm` and `find`. Without a disk the tree lives in RAM for the session.
+- **Full-screen text editor**: `write <file>` opens an editor with a status line and cursor movement.
+- **Games**: `snake` runs a playable snake game on the text-mode screen.
+- **Memory management**: Physical page allocator, paging, and a kernel heap, summarised by `mem`.
+- **Multitasking**: A preemptive scheduler with kernel tasks, listed by `tasks`.
+- **Date and time**: The CMOS real-time clock, settable with `setdate` and `settime`, plus `time`, `cal` and `uptime`.
+- **Text-mode UI**: 80x25 VGA output, CP437 box-drawing glyphs, PS/2 keyboard input and serial logging.
 
 ## Requirements
 
@@ -36,11 +45,13 @@ AdaOS has been tested with QEMU (`qemu-system-i386`) and VirtualBox 7.2. In Virt
 
 | Command           | Description                                     |
 |-------------------|-------------------------------------------------|
+| `cal`             | Show this month's calendar                      |
 | `cat <path>`      | Print a file                                    |
 | `cd <path>`       | Change the current directory                    |
 | `clear`           | Clear the screen                                |
 | `cp <src> <dst>`  | Copy a file or a directory and its contents     |
 | `disk`            | Show the disk and its file system               |
+| `find <name>`     | Find files whose name contains <name>           |
 | `help`            | List available commands                         |
 | `ls [path]`       | List a directory                                |
 | `mem`             | Show RAM, paging, the heap and the kernel size  |
@@ -57,7 +68,9 @@ AdaOS has been tested with QEMU (`qemu-system-i386`) and VirtualBox 7.2. In Virt
 | `snake`           | Play the snake game                             |
 | `tasks`           | Show the running tasks                          |
 | `time`            | Show the date and the time                      |
+| `tree [path]`     | Show a directory as a tree                      |
 | `uptime`          | Show how long AdaOS has been running            |
+| `ver`             | Show the AdaOS version                          |
 | `write <file>`    | Edit a file in the full-screen editor           |
 
 ## Building

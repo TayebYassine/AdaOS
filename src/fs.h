@@ -43,6 +43,9 @@ int fs_load_module(uint32_t magic, uint32_t info_addr);
 /* The tree's root. */
 struct fs_node* fs_root(void);
 
+/* The absolute path of a node; returns 0 if it does not fit. */
+int fs_node_path(struct fs_node* node, char* out);
+
 /* The node a path names, or 0; the error is printed here. */
 struct fs_node* fs_resolve(const char* path);
 

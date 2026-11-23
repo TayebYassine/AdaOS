@@ -6,6 +6,7 @@
 #include "io.h"
 #include "libc.h"
 #include "screen.h"
+#include "version.h"
 
 // The kernel's wall clock: one date and one time that keep moving.
 //
@@ -44,12 +45,6 @@
 
 /* Room for the longest stamp, "MM-DD-YYYY HH:MM:SS PM", plus the '\0'. */
 #define STAMP_MAX 24
-
-/* The version the build scripts stamp into the kernel; the plain name is
- * used when the kernel is compiled by hand. */
-#ifndef ADAOS_VERSION
-#define ADAOS_VERSION "AdaOS"
-#endif
 
 static struct clock_time now;
 
@@ -256,7 +251,7 @@ static void rtc_write_time(int hour, int minute, int second) {
 
 /* Sakamoto's algorithm: calculate the day of the week (1 = Sunday, 7 =
  * Saturday). */
-static int day_of_week(int year, int month, int day) {
+int clock_day_of_week(int year, int month, int day) {
     static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
 
     if (month < 3) {
@@ -276,7 +271,7 @@ static void rtc_write_date(int year, int month, int day) {
     uint8_t rtc_month = (uint8_t)month;
     uint8_t rtc_year = (uint8_t)(year % 100);
     uint8_t rtc_century = (uint8_t)(year / 100);
-    uint8_t rtc_dow = (uint8_t)day_of_week(year, month, day);
+    uint8_t rtc_dow = (uint8_t)clock_day_of_week(year, month, day);
 
     if (is_bcd) {
         rtc_day = (uint8_t)binary_to_bcd(rtc_day);
