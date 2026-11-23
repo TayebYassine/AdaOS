@@ -258,6 +258,18 @@ static int node_path(struct fs_node* node, char* out) {
     return 1;
 }
 
+/* Is "node" the same as "ancestor" or somewhere under it? */
+static int within(struct fs_node* node, struct fs_node* ancestor) {
+    while (node != 0) {
+        if (node == ancestor) {
+            return 1;
+        }
+        node = node->parent;
+    }
+
+    return 0;
+}
+
 void fs_init(void) {
     spinlock_acquire(&tree_lock);
 
@@ -573,6 +585,238 @@ int fs_remove(const char* path) {
     spinlock_release(&tree_lock);
 
     return 1;
+}
+
+/* The body of fs_move(), which runs with the tree lock held. */
+static int move_tree(const char* from, const char* to) {
+    char src_abs[FS_PATH_MAX];
+    char dst_abs[FS_PATH_MAX];
+    char path[FS_PATH_MAX];
+    char name[FS_NAME_MAX];
+    const char* suffix = 0;
+    struct fs_node* src;
+    struct fs_node* dst;
+    struct fs_node* parent;
+    struct fs_node* target;
+
+    if (!make_absolute(from, src_abs)) {
+        print("Error: that path is too long.\n");
+        return 0;
+    }
+    if (!make_absolute(to, dst_abs)) {
+        print("Error: that path is too long.\n");
+        return 0;
+    }
+
+    src = walk(src_abs, 0, 0);
+    if (src == 0) {
+        print("Error: no such file or directory.\n");
+        return 0;
+    }
+    if (src == root) {
+        print("Error: the root directory cannot be moved.\n");
+        return 0;
+    }
+
+    dst = walk(dst_abs, 0, 0);
+
+    if (src == dst) {
+        return 1;
+    }
+
+    if (dst != 0 && dst->kind == FS_DIR) {
+        parent = dst;
+        memcpy(name, src->name, strlen(src->name) + 1);
+    } else {
+        parent = walk(dst_abs, name, 1);
+        if (parent == 0) {
+            print("Error: no such directory.\n");
+            return 0;
+        }
+        if (!name_ok(name)) {
+            print("Error: that is not a usable name.\n");
+            return 0;
+        }
+    }
+
+    if (src->kind == FS_DIR && within(parent, src)) {
+        print("Error: a directory cannot be moved into itself.\n");
+        return 0;
+    }
+
+    target = find_child(parent, name);
+
+    if (target == src) {
+        return 1;
+    }
+
+    if (target != 0) {
+        if (target->kind == FS_DIR) {
+            print("Error: that path is a directory.\n");
+            return 0;
+        }
+        if (src->kind == FS_DIR) {
+            print("Error: a file with that name already exists.\n");
+            return 0;
+        }
+
+        detach_child(target);
+        free_tree(target);
+    }
+
+    if (node_path(src, path)) {
+        uint32_t len = (uint32_t)strlen(path);
+
+        if (strncmp(cwd, path, len) == 0 &&
+            (cwd[len] == '\0' || cwd[len] == '/')) {
+            suffix = cwd + len;
+        }
+    }
+
+    detach_child(src);
+    memcpy(src->name, name, strlen(name) + 1);
+    attach_child(parent, src);
+    dirty = 1;
+
+    if (suffix != 0 && node_path(src, path) &&
+        strlen(path) + strlen(suffix) + 1 <= FS_PATH_MAX) {
+        strcat(path, suffix);
+        strcpy(cwd, path);
+    }
+
+    if (walk(cwd, 0, 0) == 0) {
+        memcpy(cwd, "/", 2);
+    }
+
+    return 1;
+}
+
+int fs_move(const char* from, const char* to) {
+    int ok;
+
+    spinlock_acquire(&tree_lock);
+    ok = move_tree(from, to);
+    spinlock_release(&tree_lock);
+
+    return ok;
+}
+
+/* Copy a node and everything under it into "parent" as "name". */
+static struct fs_node* copy_node(struct fs_node* src, struct fs_node* parent,
+                                 const char* name) {
+    struct fs_node* node = new_node(name, src->kind);
+
+    if (node == 0) {
+        return 0;
+    }
+
+    if (src->kind == FS_FILE) {
+        if (!fill_file(node, src->data, src->size)) {
+            kfree(node);
+            return 0;
+        }
+    }
+
+    for (struct fs_node* child = src->children; child != 0;
+         child = child->sibling) {
+        if (copy_node(child, node, child->name) == 0) {
+            free_tree(node);
+            return 0;
+        }
+    }
+
+    attach_child(parent, node);
+
+    return node;
+}
+
+/* The body of fs_copy(), which runs with the tree lock held. */
+static int copy_tree(const char* from, const char* to) {
+    char src_abs[FS_PATH_MAX];
+    char dst_abs[FS_PATH_MAX];
+    char name[FS_NAME_MAX];
+    struct fs_node* src;
+    struct fs_node* dst;
+    struct fs_node* parent;
+    struct fs_node* target;
+
+    if (!make_absolute(from, src_abs)) {
+        print("Error: that path is too long.\n");
+        return 0;
+    }
+    if (!make_absolute(to, dst_abs)) {
+        print("Error: that path is too long.\n");
+        return 0;
+    }
+
+    src = walk(src_abs, 0, 0);
+    if (src == 0) {
+        print("Error: no such file or directory.\n");
+        return 0;
+    }
+
+    dst = walk(dst_abs, 0, 0);
+
+    if (dst != 0 && dst->kind == FS_DIR) {
+        parent = dst;
+        memcpy(name, src->name, strlen(src->name) + 1);
+    } else {
+        parent = walk(dst_abs, name, 1);
+        if (parent == 0) {
+            print("Error: no such directory.\n");
+            return 0;
+        }
+        if (!name_ok(name)) {
+            print("Error: that is not a usable name.\n");
+            return 0;
+        }
+    }
+
+    if (src->kind == FS_DIR && within(parent, src)) {
+        print("Error: a directory cannot be copied into itself.\n");
+        return 0;
+    }
+
+    target = find_child(parent, name);
+
+    if (target == src) {
+        return 1;
+    }
+
+    if (target != 0) {
+        if (target->kind == FS_DIR) {
+            print("Error: that path is a directory.\n");
+            return 0;
+        }
+        if (src->kind == FS_DIR) {
+            print("Error: a file with that name already exists.\n");
+            return 0;
+        }
+
+        if (!fill_file(target, src->data, src->size)) {
+            return 0;
+        }
+
+        dirty = 1;
+        return 1;
+    }
+
+    if (copy_node(src, parent, name) == 0) {
+        return 0;
+    }
+
+    dirty = 1;
+    return 1;
+}
+
+int fs_copy(const char* from, const char* to) {
+    int ok;
+
+    spinlock_acquire(&tree_lock);
+    ok = copy_tree(from, to);
+    spinlock_release(&tree_lock);
+
+    return ok;
 }
 
 /* The current directory. The pointer outlives the lock, so the caller

@@ -49,6 +49,8 @@ enum command_id {
     CMD_WRITE,
     CMD_MKDIR,
     CMD_RM,
+    CMD_MV,
+    CMD_CP,
     CMD_DISK,
     CMD_TIME,
     CMD_SETTIME,
@@ -58,32 +60,34 @@ enum command_id {
 };
 
 static const char* command_names[] = {
-    "print", "help", "shutdown", "reboot", "clear", "uptime", "sleep", "mem",
-    "tasks", "ls",   "cd",       "pwd",    "cat",   "write",  "mkdir", "rm",
-    "disk",  "time", "settime",  "setdate", "snake"};
+    "print", "help", "shutdown", "reboot", "clear",   "uptime",  "sleep", "mem",
+    "tasks", "ls",   "cd",       "pwd",    "cat",     "write",   "mkdir", "rm",
+    "mv",    "cp",   "disk",     "time",   "settime", "setdate", "snake"};
 
 static const char* command_help[] = {
-    "cat <path>   - print a file",
-    "cd <path>    - change the current directory",
-    "clear        - clear the screen",
-    "disk         - show the disk and its file system",
-    "help [page]  - show this list of commands",
-    "ls [path]    - list a directory",
-    "mem          - show RAM, paging, the heap and the kernel size",
-    "mkdir <path> - create a directory",
-    "print <text> - print text on the screen",
-    "pwd          - show the current directory",
-    "reboot       - restart the computer",
-    "rm <path>    - remove a file or directory",
-    "setdate      - set the date",
-    "settime      - set the time of day",
-    "shutdown     - turn off the computer",
-    "sleep <sec>  - pause for a number of seconds",
-    "snake        - play the snake game",
-    "tasks        - show the running tasks",
-    "time         - show the date and the time",
-    "uptime       - how long AdaOS has been running",
-    "write <file> - edit a file"};
+    "cat <path>     - print a file",
+    "cd <path>      - change the current directory",
+    "clear          - clear the screen",
+    "cp <src> <dst> - copy a file or directory",
+    "disk           - show the disk and its file system",
+    "help [page]    - show this list of commands",
+    "ls [path]      - list a directory",
+    "mem            - show RAM, paging, the heap and the kernel size",
+    "mkdir <path>   - create a directory",
+    "mv <src> <dst> - move or rename a file or directory",
+    "print <text>   - print text on the screen",
+    "pwd            - show the current directory",
+    "reboot         - restart the computer",
+    "rm <path>      - remove a file or directory",
+    "setdate        - set the date",
+    "settime        - set the time of day",
+    "shutdown       - turn off the computer",
+    "sleep <sec>    - pause for a number of seconds",
+    "snake          - play the snake game",
+    "tasks          - show the running tasks",
+    "time           - show the date and the time",
+    "uptime         - how long AdaOS has been running",
+    "write <file>   - edit a file"};
 
 /* Look up a command by name; returns its id or CMD_NOT_FOUND. */
 static int find_command(const char* name) {
@@ -388,7 +392,7 @@ void command_execute(char* line) {
                 break;
             }
 
-            kprintf("Directory %s:\n", shown);
+            kprintf("Directory: %s\n", shown);
 
             if (dir->children == 0) {
                 print("(empty)\n");
@@ -460,6 +464,20 @@ void command_execute(char* line) {
             }
             fs_remove(words[1]);
             break;
+        case CMD_MV:
+            if (count != 3) {
+                print("Usage: mv <source> <destination>\n");
+                break;
+            }
+            fs_move(words[1], words[2]);
+            break;
+        case CMD_CP:
+            if (count != 3) {
+                print("Usage: cp <source> <destination>\n");
+                break;
+            }
+            fs_copy(words[1], words[2]);
+            break;
         case CMD_DISK: {
             if (!diskfs_present()) {
                 print("No disk on the primary IDE bus.\n");
@@ -471,8 +489,7 @@ void command_execute(char* line) {
                     (int)(diskfs_total_sectors() / 2048),
                     (int)diskfs_total_sectors());
             kprintf("Used: %d KB in %d of %d entries\n",
-                    (int)(diskfs_used_sectors() / 2),
-                    (int)diskfs_entry_count(),
+                    (int)(diskfs_used_sectors() / 2), (int)diskfs_entry_count(),
                     (int)diskfs_entry_capacity());
             break;
         }
@@ -556,6 +573,6 @@ void command_execute(char* line) {
             break;
         }
     }
-    
+
     diskfs_sync();
 }

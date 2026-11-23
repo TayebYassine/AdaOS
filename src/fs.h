@@ -61,6 +61,12 @@ struct fs_node* fs_write(const char* path, const char* data, uint32_t len);
 /* Remove a file, or a directory and everything under it. */
 int fs_remove(const char* path);
 
+/* Move or rename a file or directory. Returns 1 on success. */
+int fs_move(const char* from, const char* to);
+
+/* Copy a file or directory, with everything under it. Returns 1 on success. */
+int fs_copy(const char* from, const char* to);
+
 /* The current directory. */
 const char* fs_cwd(void);
 
