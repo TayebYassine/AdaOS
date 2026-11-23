@@ -23,6 +23,8 @@
 
 /* Maximum number of words in one command line. */
 #define MAX_WORDS 32
+/* Number of commands shown on one page of "help". */
+#define COMMANDS_PER_PAGE 6
 /* The longest sleep acceptable: 86400 seconds (24 hours). */
 #define MAX_SLEEP_SECONDS 86400
 /* Number of elements in an array. */
@@ -63,7 +65,7 @@ static const char* command_help[] = {
     "cd <path>    - change the current directory",
     "clear        - clear the screen",
     "disk         - show the disk and its file system",
-    "help         - show this list of commands",
+    "help [page]  - show this list of commands",
     "ls [path]    - list a directory",
     "mem          - show RAM, paging, the heap and the kernel size",
     "mkdir <path> - create a directory",
@@ -244,9 +246,33 @@ void command_execute(char* line) {
             break;
         }
         case CMD_HELP: {
+            int total_commands = (int)ARRAY_COUNT(command_help);
+            int total_pages =
+                (total_commands + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
+            uint32_t page = 1;
+
+            if (count > 1) {
+                uint32_t requested = 0;
+                int digits = parse_uint(words[1], &requested);
+
+                if (count > 2 || digits == 0 || words[1][digits] != '\0' ||
+                    requested < 1 || (int)requested > total_pages) {
+                    print("Error: out of range\n");
+                    break;
+                }
+
+                page = requested;
+            }
+
+            int start = ((int)page - 1) * COMMANDS_PER_PAGE;
+            int end = start + COMMANDS_PER_PAGE;
+            if (end > total_commands) {
+                end = total_commands;
+            }
+
             print("Available commands:\n");
 
-            for (int i = 0; i < (int)ARRAY_COUNT(command_help); i++) {
+            for (int i = start; i < end; i++) {
                 print("  ");
                 print(command_help[i]);
                 print_char('\n');
