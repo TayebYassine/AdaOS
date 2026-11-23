@@ -1,5 +1,6 @@
 #include <stdint.h>
 
+#include "fs.h"
 #include "gdt.h"
 #include "idt.h"
 #include "interrupt.h"
@@ -30,6 +31,9 @@ void kernel_main(uint32_t magic, uint32_t info_addr) {
     pmm_init(magic, info_addr);
     paging_init();
     kmalloc_init();
+
+    fs_init();
+    fs_load_module(magic, info_addr);
 
     gdt_init();
     idt_init();

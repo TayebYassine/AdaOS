@@ -35,6 +35,9 @@ rm -rf "$ISO_DIR"
 mkdir -p "$ISO_DIR/boot/grub"
 cp "$BUILD/kernel.elf" "$ISO_DIR/boot/"
 
+# Pack the starting files as the module GRUB hands the kernel.
+tar -C "$ROOT/files" -cf "$ISO_DIR/boot/init.tar" .
+
 echo "[3/4] Writing GRUB config..."
 cat > "$ISO_DIR/boot/grub/grub.cfg" << 'EOF'
 set timeout=0
@@ -42,6 +45,7 @@ set default=0
 
 menuentry "AdaOS" {
     multiboot /boot/kernel.elf
+    module /boot/init.tar
     boot
 }
 EOF

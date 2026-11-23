@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "editor.h"
+#include "fs.h"
 #include "io.h"
 #include "kmalloc.h"
 #include "kprintf.h"
@@ -33,23 +35,37 @@ enum command_id {
     CMD_SLEEP,
     CMD_MEM,
     CMD_TASKS,
+    CMD_LS,
+    CMD_CD,
+    CMD_PWD,
+    CMD_CAT,
+    CMD_WRITE,
+    CMD_MKDIR,
+    CMD_RM,
     CMD_NOT_FOUND = -1,
 };
 
-static const char* command_names[] = {"print",  "help",  "shutdown",
-                                      "reboot", "clear", "uptime",
-                                      "sleep",  "mem",   "tasks"};
+static const char* command_names[] = {
+    "print", "help", "shutdown", "reboot", "clear", "uptime", "sleep", "mem",
+    "tasks", "ls",   "cd",       "pwd",    "cat",   "write",  "mkdir", "rm"};
 
 static const char* command_help[] = {
-    "print <text> - print text on the screen",
-    "help         - show this list of commands",
-    "shutdown     - turn off the computer",
-    "reboot       - restart the computer",
+    "cat <path>   - print a file",
+    "cd <path>    - change the current directory",
     "clear        - clear the screen",
-    "uptime       - how long AdaOS has been running",
-    "sleep <sec>  - pause for a number of seconds",
+    "help         - show this list of commands",
+    "ls [path]    - list a directory",
     "mem          - show RAM, paging, the heap and the kernel size",
-    "tasks        - show the running tasks"};
+    "mkdir <path> - create a directory",
+    "print <text> - print text on the screen",
+    "pwd          - show the current directory",
+    "reboot       - restart the computer",
+    "rm <path>    - remove a file or directory",
+    "shutdown     - turn off the computer",
+    "sleep <sec>  - pause for a number of seconds",
+    "tasks        - show the running tasks",
+    "uptime       - how long AdaOS has been running",
+    "write <file> - edit a file"};
 
 /* Look up a command by name; returns its id or CMD_NOT_FOUND. */
 static int find_command(const char* name) {
@@ -290,6 +306,98 @@ void command_execute(char* line) {
             print("Done.\n");
             break;
         }
+        case CMD_LS: {
+            const char* shown;
+            struct fs_node* dir;
+
+            if (count > 2) {
+                print("Usage: ls [path]\n");
+                break;
+            }
+
+            shown = (count == 2) ? words[1] : fs_cwd();
+            dir = fs_resolve(shown);
+
+            if (dir == 0) {
+                break;
+            }
+            if (dir->kind != FS_DIR) {
+                print("Error: that path is not a directory.\n");
+                break;
+            }
+
+            kprintf("Directory %s:\n", shown);
+
+            if (dir->children == 0) {
+                print("(empty)\n");
+                break;
+            }
+
+            for (struct fs_node* node = dir->children; node != 0;
+                 node = node->sibling) {
+                if (node->kind == FS_DIR) {
+                    kprintf("  %s/\n", node->name);
+                } else {
+                    kprintf("  %s  (%d bytes)\n", node->name, (int)node->size);
+                }
+            }
+            break;
+        }
+        case CMD_CD:
+            if (count > 2) {
+                print("Usage: cd <path>\n");
+                break;
+            }
+            fs_chdir(count == 2 ? words[1] : "/");
+            break;
+        case CMD_PWD:
+            kprintf("Directory: %s\n", fs_cwd());
+            break;
+        case CMD_CAT: {
+            struct fs_node* node;
+
+            if (count != 2) {
+                print("Usage: cat <path>\n");
+                break;
+            }
+
+            node = fs_resolve(words[1]);
+            if (node == 0) {
+                break;
+            }
+            if (node->kind == FS_DIR) {
+                print("Error: that path is a directory.\n");
+                break;
+            }
+
+            print(node->data);
+            if (node->size == 0 || node->data[node->size - 1] != '\n') {
+                print_char('\n');
+            }
+            break;
+        }
+        case CMD_WRITE:
+            if (count != 2) {
+                print("Usage: write <file>\n");
+                break;
+            }
+
+            editor_open(words[1]);
+            break;
+        case CMD_MKDIR:
+            if (count != 2) {
+                print("Usage: mkdir <path>\n");
+                break;
+            }
+            fs_mkdir(words[1]);
+            break;
+        case CMD_RM:
+            if (count != 2) {
+                print("Usage: rm <path>\n");
+                break;
+            }
+            fs_remove(words[1]);
+            break;
         default: {
             print("Error: command not found.\n");
             break;

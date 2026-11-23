@@ -190,6 +190,19 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
         reserve_region(info->mmap_addr, info->mmap_length);
     }
 
+    if ((info->flags & MULTIBOOT_INFO_MODS) != 0 && info->mods_count > 0) {
+        struct multiboot_module* mods =
+            (struct multiboot_module*)info->mods_addr;
+
+        reserve_region(info->mods_addr,
+                       info->mods_count * sizeof(struct multiboot_module));
+
+        for (uint32_t i = 0; i < info->mods_count; i++) {
+            reserve_region(mods[i].mod_start,
+                           mods[i].mod_end - mods[i].mod_start);
+        }
+    }
+
     uint32_t free_pages = 0;
     for (uint32_t page = 0; page < page_limit; page++) {
         if (!page_used(page)) {

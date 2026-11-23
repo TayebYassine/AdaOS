@@ -30,6 +30,7 @@
 #define SCANCODE_LSHIFT 0x2A
 #define SCANCODE_RSHIFT 0x36
 #define SCANCODE_CAPSLOCK 0x3A
+#define SCANCODE_CTRL 0x1D
 
 // Arrow keys always come with the 0xE0 prefix; these are the second byte.
 #define SCANCODE_UP 0x48
@@ -41,6 +42,7 @@
 #define KEY_BUFFER_SIZE 128
 
 static int shift_held = 0;
+static int ctrl_held = 0;
 static int caps_lock = 0;
 static int extended_prefix = 0;
 
@@ -100,6 +102,11 @@ static int translate(uint8_t scancode) {
         int released = (scancode & SCANCODE_RELEASED) != 0;
         scancode &= 0x7F;  // keep only the key number
 
+        if (scancode == SCANCODE_CTRL) {
+            ctrl_held = !released;
+            return 0;
+        }
+
         if (!released) {
             if (scancode == SCANCODE_UP) {
                 return KEY_UP;
@@ -127,6 +134,12 @@ static int translate(uint8_t scancode) {
         return 0;
     }
 
+    // Track whether Ctrl is currently held down.
+    if (scancode == SCANCODE_CTRL) {
+        ctrl_held = !released;
+        return 0;
+    }
+
     // Caps Lock toggles only when the key goes down, not when released.
     if (scancode == SCANCODE_CAPSLOCK && !released) {
         caps_lock = !caps_lock;
@@ -146,6 +159,17 @@ static int translate(uint8_t scancode) {
         } else if (!shift_held && c >= 'a' && c <= 'z') {
             c -= 32;
         }
+    }
+
+    // Ctrl + letter becomes the control code: Ctrl+S = 0x13, Ctrl+E = 0x05.
+    if (ctrl_held) {
+        if (c >= 'a' && c <= 'z') {
+            return c - 'a' + 1;
+        }
+        if (c >= 'A' && c <= 'Z') {
+            return c - 'A' + 1;
+        }
+        return 0;
     }
 
     return c != '\0' ? c : 0;

@@ -16,6 +16,8 @@
 
 /* mem_lower/mem_upper are valid */
 #define MULTIBOOT_INFO_MEMORY 0x00000001
+/* mods_count/mods_addr are valid */
+#define MULTIBOOT_INFO_MODS 0x00000008
 /* mmap_length/mmap_addr are valid */
 #define MULTIBOOT_INFO_MEM_MAP 0x00000040
 
@@ -26,6 +28,16 @@
 /* The first megabyte is never usable: BIOS data, the VGA window, option
  * ROMs. The map usually says so too. */
 #define MULTIBOOT_LOW_MEMORY_END 0x00100000
+
+/* One module the loader put in memory; for AdaOS, the initrd. */
+struct multiboot_module {
+    /* first byte, one past the last */
+    uint32_t mod_start;
+    uint32_t mod_end;
+    /* a string the loader attached, not used here */
+    uint32_t string;
+    uint32_t reserved;
+} __attribute__((packed));
 
 /* The information structure itself. */
 struct multiboot_info {

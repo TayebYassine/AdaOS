@@ -1,0 +1,4 @@
+AdaOS todo
+
+- an ATA driver
+- a real file system on the disk to go with it

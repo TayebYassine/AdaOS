@@ -9,10 +9,10 @@
 // the cursor, scrolls at the bottom edge, and keeps the hardware
 // cursor on screen.
 
-/* Number of character columns */
-#define SCREEN_WIDTH 80
-/* Number of character rows */
-#define SCREEN_HEIGHT 25
+/* Number of character columns (SCREEN_COLS in screen.h) */
+#define SCREEN_WIDTH SCREEN_COLS
+/* Number of character rows (SCREEN_ROWS in screen.h) */
+#define SCREEN_HEIGHT SCREEN_ROWS
 /* Physical address of the VGA text buffer */
 #define VGA_MEMORY 0xB8000
 
@@ -179,4 +179,85 @@ void cursor_left(void) {
 void cursor_right(void) {
     move_right();
     update_cursor();
+}
+
+/* Draw one character into one cell, leaving the cursor alone. */
+void screen_put_at(int row, int col, char c, uint8_t attribute) {
+    if (row < 0 || row >= SCREEN_HEIGHT || col < 0 || col >= SCREEN_WIDTH) {
+        return;
+    }
+
+    put_char_at(row, col, c, attribute);
+}
+
+/* Fill a whole row with one character and colour. */
+void screen_fill_row(int row, char c, uint8_t attribute) {
+    if (row < 0 || row >= SCREEN_HEIGHT) {
+        return;
+    }
+
+    for (int col = 0; col < SCREEN_WIDTH; col++) {
+        put_char_at(row, col, c, attribute);
+    }
+}
+
+/* Draw a string on one row, clipped at the right edge. */
+void screen_puts_at(int row, int col, const char* text, uint8_t attribute) {
+    for (int i = 0; text[i] != '\0'; i++) {
+        if (col + i >= SCREEN_WIDTH) {
+            break;
+        }
+        if (col + i < 0) {
+            continue;
+        }
+
+        put_char_at(row, col + i, text[i], attribute);
+    }
+}
+
+/* Park the hardware cursor on a cell. */
+void screen_move_to(int row, int col) {
+    if (row < 0) {
+        row = 0;
+    }
+    if (row >= SCREEN_HEIGHT) {
+        row = SCREEN_HEIGHT - 1;
+    }
+    if (col < 0) {
+        col = 0;
+    }
+    if (col >= SCREEN_WIDTH) {
+        col = SCREEN_WIDTH - 1;
+    }
+
+    cursor_row = row;
+    cursor_col = col;
+    update_cursor();
+}
+
+/* Copy the whole screen and the cursor position out. */
+void screen_save(uint16_t* cells, int* row, int* col) {
+    volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;
+
+    for (int i = 0; i < SCREEN_CELLS; i++) {
+        cells[i] = vga[i];
+    }
+
+    if (row != 0) {
+        *row = cursor_row;
+    }
+    if (col != 0) {
+        *col = cursor_col;
+    }
+}
+
+/* Put a saved screen back, cursor included. */
+void screen_restore(const uint16_t* cells, int row, int col) {
+    volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;
+
+    for (int i = 0; i < SCREEN_CELLS; i++) {
+        vga[i] = cells[i];
+    }
+
+    screen_move_to(row, col);
 }

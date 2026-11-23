@@ -138,7 +138,8 @@ static void read_line(char* line) {
         }
 
         // Normal key: insert it at the cursor and show it right away.
-        if (key < KEY_UP) {
+        // Control codes are not part of a command line.
+        if (key >= ' ' && key < KEY_UP) {
             if (length < LINE_MAX - 1) {
                 // Shift the rest of the line one position right.
                 for (int i = length; i >= cursor; i--) {
