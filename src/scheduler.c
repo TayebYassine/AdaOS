@@ -46,6 +46,8 @@ enum task_state {
 struct task {
     /* where its saved interrupt frame starts */
     uint32_t esp;
+    /* the block from kmalloc(); 0 once a dead task gave it back */
+    uint8_t* stack;
     /* never returns */
     void (*entry)(void);
     enum task_state state;
@@ -71,6 +73,10 @@ static volatile uint32_t idle_wakes = 0;
 /* From context.asm; never returns. */
 extern void context_switch(uint32_t esp) __attribute__((noreturn));
 
+/* Defined below; a task whose entry function returned uses it to leave
+ * the CPU for good. */
+static void retire_and_switch(struct task* dying) __attribute__((noreturn));
+
 /* The idle task: halt until the next interrupt, forever. This is what
  * runs when nothing else can, and what keeps "sleep" from meaning "the
  * machine is stuck". */
@@ -90,10 +96,9 @@ static void task_bootstrap(void) {
 
     me->entry();
 
-    me->state = TASK_DEAD;
-    for (;;) {
-        interrupt_wait();
-    }
+    // The entry function returned, so the task is finished. It leaves the
+    // CPU for good here; the stack goes back to the heap on the next tick.
+    retire_and_switch(me);
 }
 
 /* Name of a state, for display. */
@@ -155,6 +160,7 @@ static struct task* task_create(const char* name, void (*entry)(void)) {
     }
 
     memset(task, 0, sizeof(*task));
+    task->stack = stack;
     task->entry = entry;
     task->state = TASK_READY;
     task->name = name;
@@ -213,6 +219,58 @@ static int next_runnable(int index) {
     return -1;
 }
 
+/* Stop running "dying" for good and give the CPU to the next task. The
+ * stack is not freed here - this code is still standing on it - but by
+ * whoever runs next, in reap_dead_tasks(). Never returns. */
+static void retire_and_switch(struct task* dying) {
+    dying->state = TASK_DEAD;
+
+    int index = next_runnable(current_index);
+
+    if (index < 0) {
+        kprintf("Scheduler: no task left to run\n");
+
+        for (;;) {
+            interrupt_wait();
+        }
+    }
+
+    current_index = index;
+    current = tasks[index];
+    current->state = TASK_RUNNING;
+
+    context_switch(current->esp);
+}
+
+/* A task faulted: retire it and let another one run. The interrupt
+ * frame it faulted on is abandoned with its stack - nothing resumes a
+ * dead task - and the next tick reclaims both. Returns 0 when the fault
+ * did not come from a task, which the caller has to treat as fatal. */
+int scheduler_kill_current(struct interrupt_frame* frame) {
+    (void)frame;
+
+    if (current == 0) {
+        return 0;
+    }
+
+    retire_and_switch(current);
+}
+
+/* Give a dead task's stack back. The task running right now may be newly
+ * dead and still standing on its stack, so it is skipped; the tick that
+ * runs after it has been switched away cleans it up. The task entry
+ * itself stays, so "tasks" can still show it as DEAD. */
+static void reap_dead_tasks(void) {
+    for (int i = 0; i < task_count; i++) {
+        struct task* task = tasks[i];
+
+        if (task != current && task->state == TASK_DEAD && task->stack != 0) {
+            kfree(task->stack);
+            task->stack = 0;
+        }
+    }
+}
+
 /* IRQ0: account for the tick, wake sleepers, ask for a switch. */
 void scheduler_tick(struct interrupt_frame* frame) {
     (void)frame;
@@ -233,6 +291,8 @@ void scheduler_tick(struct interrupt_frame* frame) {
             task->state = TASK_READY;
         }
     }
+
+    reap_dead_tasks();
 
     need_resched = 1;
 }

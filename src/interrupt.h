@@ -37,4 +37,15 @@ void interrupt_enable(void);
 /* Switch hardware interrupts off. */
 void interrupt_disable(void);
 
+/* The interrupt state as interrupt_save() found it: the flags register,
+ * IF included. */
+typedef uint32_t interrupt_flags;
+
+/* Block hardware interrupts and hand back the old state, so a lock can
+ * put back exactly what it found instead of blindly enabling. */
+interrupt_flags interrupt_save(void);
+
+/* Put back the state interrupt_save() returned. */
+void interrupt_restore(interrupt_flags flags);
+
 #endif /* ADAOS_INTERRUPT_H */

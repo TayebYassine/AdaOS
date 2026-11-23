@@ -35,6 +35,10 @@ static uint32_t page_limit = 1;
  * would rescan from the bottom of memory. */
 static uint32_t search_hint = 1;
 
+/* First page that is off limits (see pmm_set_alloc_ceiling()): the
+ * whole address space until paging narrows it. */
+static uint32_t ceiling_page = PMM_MAX_PAGES;
+
 static struct pmm_stats stats;
 
 // Boundary symbols from linker.ld, around the whole kernel image.
@@ -76,6 +80,10 @@ static void free_region(uint32_t base, uint32_t length) {
         first++;
     }
     uint32_t last = end / PMM_PAGE_SIZE;
+
+    if (end > stats.usable_end) {
+        stats.usable_end = end;
+    }
 
     uint32_t low_limit = MULTIBOOT_LOW_MEMORY_END / PMM_PAGE_SIZE;
     if (first < low_limit) {
@@ -138,6 +146,7 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
 
     page_limit = 1;
     search_hint = 1;
+    ceiling_page = PMM_MAX_PAGES;
 
     stats.kernel_start = (uint32_t)kernel_start;
     stats.kernel_end = (uint32_t)kernel_end;
@@ -225,10 +234,13 @@ uint32_t pmm_alloc_page(void) {
         return 0;
     }
 
-    uint32_t page = scan_free_page(search_hint, page_limit);
+    uint32_t scan_end = page_limit < ceiling_page ? page_limit : ceiling_page;
+    uint32_t page = scan_free_page(search_hint, scan_end);
 
     if (page == 0) {
-        page = scan_free_page(1, search_hint);
+        uint32_t wrap_end = search_hint < scan_end ? search_hint : scan_end;
+
+        page = scan_free_page(1, wrap_end);
     }
 
     if (page == 0) {
@@ -262,6 +274,14 @@ void pmm_free_page(uint32_t addr) {
     if (page < search_hint) {
         search_hint = page;
     }
+}
+
+/* Refuse pages from "bytes" upwards: they sit outside whatever the
+ * paging layer has mapped, and nothing could reach them. */
+void pmm_set_alloc_ceiling(uint32_t bytes) {
+    uint32_t page = bytes / PMM_PAGE_SIZE;
+
+    ceiling_page = page < PMM_MAX_PAGES ? page : PMM_MAX_PAGES;
 }
 
 /* Counters for the "mem" command. */

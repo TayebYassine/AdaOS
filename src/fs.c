@@ -7,18 +7,26 @@
 #include "libc.h"
 #include "multiboot.h"
 #include "screen.h"
+#include "spinlock.h"
 
 // The RAM file system: a tree of nodes in the kernel heap, rooted at "/".
 // Files live as long as the machine does - nothing reaches a disk - but
 // the shell sees an ordinary directory tree, and a disk-backed version
 // can later be dropped in behind these same calls.
 //
-// Every call happens inside the shell task, one at a time, so the tree
-// needs no locking.
+// The tree is shared state: the shell walks and changes it, and a
+// future task or an IRQ handler could too. So every call that touches it
+// holds tree_lock, which also keeps interrupts out - an interrupt
+// handler that wanted the tree could never wait for the task it
+// interrupted. Calls that need several nodes hold the lock once and use
+// the unlocked helpers below.
 
 static char cwd[FS_PATH_MAX] = "/";
 
 static struct fs_node* root = 0;
+
+/* Guards the tree, cwd and the dirty flag. */
+static struct spinlock tree_lock;
 
 /* Set when the tree changed since it was last saved to the disk. */
 static int dirty = 0;
@@ -251,15 +259,22 @@ static int node_path(struct fs_node* node, char* out) {
 }
 
 void fs_init(void) {
+    spinlock_acquire(&tree_lock);
+
     root = new_node("/", FS_DIR);
     memcpy(cwd, "/", 2);
     dirty = 0;
+
+    spinlock_release(&tree_lock);
 }
 
 void fs_reset(void) {
     struct fs_node* child;
 
+    spinlock_acquire(&tree_lock);
+
     if (root == 0) {
+        spinlock_release(&tree_lock);
         return;
     }
 
@@ -274,15 +289,33 @@ void fs_reset(void) {
     root->children = 0;
     memcpy(cwd, "/", 2);
     dirty = 0;
+
+    spinlock_release(&tree_lock);
 }
 
-int fs_dirty(void) { return dirty; }
+int fs_dirty(void) {
+    int value;
 
-void fs_mark_clean(void) { dirty = 0; }
+    spinlock_acquire(&tree_lock);
+    value = dirty;
+    spinlock_release(&tree_lock);
 
+    return value;
+}
+
+void fs_mark_clean(void) {
+    spinlock_acquire(&tree_lock);
+    dirty = 0;
+    spinlock_release(&tree_lock);
+}
+
+/* The tree's root. The pointer outlives the lock, so this is only safe
+ * while nothing else changes the tree; the disk writer in diskfs.c,
+ * which walks it from the shell, relies on that. */
 struct fs_node* fs_root(void) { return root; }
 
-struct fs_node* fs_resolve(const char* path) {
+/* The body of fs_resolve(), which runs with the tree lock held. */
+static struct fs_node* resolve_tree(const char* path) {
     char abs[FS_PATH_MAX];
     struct fs_node* node;
 
@@ -299,14 +332,32 @@ struct fs_node* fs_resolve(const char* path) {
     return node;
 }
 
+struct fs_node* fs_resolve(const char* path) {
+    struct fs_node* node;
+
+    spinlock_acquire(&tree_lock);
+    node = resolve_tree(path);
+    spinlock_release(&tree_lock);
+
+    return node;
+}
+
 struct fs_node* fs_lookup(const char* path) {
     char abs[FS_PATH_MAX];
+    struct fs_node* node;
+
+    spinlock_acquire(&tree_lock);
 
     if (!make_absolute(path, abs)) {
+        spinlock_release(&tree_lock);
         return 0;
     }
 
-    return walk(abs, 0, 0);
+    node = walk(abs, 0, 0);
+
+    spinlock_release(&tree_lock);
+
+    return node;
 }
 
 int fs_can_write(const char* path) {
@@ -314,9 +365,13 @@ int fs_can_write(const char* path) {
     char name[FS_NAME_MAX];
     struct fs_node* existing;
     struct fs_node* parent;
+    int ok = 0;
+
+    spinlock_acquire(&tree_lock);
 
     if (!make_absolute(path, abs)) {
         print("Error: that path is too long.\n");
+        spinlock_release(&tree_lock);
         return 0;
     }
 
@@ -324,26 +379,30 @@ int fs_can_write(const char* path) {
     if (existing != 0) {
         if (existing->kind == FS_DIR) {
             print("Error: that path is a directory.\n");
-            return 0;
+        } else {
+            ok = 1;
         }
 
-        return 1;
+        spinlock_release(&tree_lock);
+        return ok;
     }
 
     parent = walk(abs, name, 1);
     if (parent == 0) {
         print("Error: no such directory.\n");
-        return 0;
-    }
-    if (!name_ok(name)) {
+    } else if (!name_ok(name)) {
         print("Error: that is not a usable name.\n");
-        return 0;
+    } else {
+        ok = 1;
     }
 
-    return 1;
+    spinlock_release(&tree_lock);
+
+    return ok;
 }
 
-struct fs_node* fs_mkdir(const char* path) {
+/* The body of fs_mkdir(), which runs with the tree lock held. */
+static struct fs_node* mkdir_tree(const char* path) {
     char abs[FS_PATH_MAX];
     char name[FS_NAME_MAX];
     struct fs_node* existing;
@@ -384,6 +443,16 @@ struct fs_node* fs_mkdir(const char* path) {
     return node;
 }
 
+struct fs_node* fs_mkdir(const char* path) {
+    struct fs_node* node;
+
+    spinlock_acquire(&tree_lock);
+    node = mkdir_tree(path);
+    spinlock_release(&tree_lock);
+
+    return node;
+}
+
 /* Point a file node at new content, replacing whatever was there. */
 static int fill_file(struct fs_node* node, const char* data, uint32_t len) {
     char* buf = (char*)kmalloc(len + 1);
@@ -403,7 +472,9 @@ static int fill_file(struct fs_node* node, const char* data, uint32_t len) {
     return 1;
 }
 
-struct fs_node* fs_write(const char* path, const char* data, uint32_t len) {
+/* The body of fs_write(), which runs with the tree lock held. */
+static struct fs_node* write_tree(const char* path, const char* data,
+                                  uint32_t len) {
     char abs[FS_PATH_MAX];
     char name[FS_NAME_MAX];
     struct fs_node* existing;
@@ -456,22 +527,37 @@ struct fs_node* fs_write(const char* path, const char* data, uint32_t len) {
     return node;
 }
 
+struct fs_node* fs_write(const char* path, const char* data, uint32_t len) {
+    struct fs_node* node;
+
+    spinlock_acquire(&tree_lock);
+    node = write_tree(path, data, len);
+    spinlock_release(&tree_lock);
+
+    return node;
+}
+
 int fs_remove(const char* path) {
     char abs[FS_PATH_MAX];
     struct fs_node* node;
 
+    spinlock_acquire(&tree_lock);
+
     if (!make_absolute(path, abs)) {
         print("Error: that path is too long.\n");
+        spinlock_release(&tree_lock);
         return 0;
     }
 
     node = walk(abs, 0, 0);
     if (node == 0) {
         print("Error: no such file or directory.\n");
+        spinlock_release(&tree_lock);
         return 0;
     }
     if (node == root) {
         print("Error: the root directory cannot be removed.\n");
+        spinlock_release(&tree_lock);
         return 0;
     }
 
@@ -479,33 +565,41 @@ int fs_remove(const char* path) {
     free_tree(node);
     dirty = 1;
 
+    // The current directory may be gone with the subtree that held it.
     if (walk(cwd, 0, 0) == 0) {
         memcpy(cwd, "/", 2);
     }
 
+    spinlock_release(&tree_lock);
+
     return 1;
 }
 
+/* The current directory. The pointer outlives the lock, so the caller
+ * must use it before anything else can change it - the shell does. */
 const char* fs_cwd(void) { return cwd; }
 
 int fs_chdir(const char* path) {
-    struct fs_node* node = fs_resolve(path);
+    struct fs_node* node;
+    int ok = 0;
 
-    if (node == 0) {
-        return 0;
+    spinlock_acquire(&tree_lock);
+
+    node = resolve_tree(path);
+
+    if (node != 0) {
+        if (node->kind != FS_DIR) {
+            print("Error: that path is not a directory.\n");
+        } else if (!node_path(node, cwd)) {
+            print("Error: that path is too long.\n");
+        } else {
+            ok = 1;
+        }
     }
 
-    if (node->kind != FS_DIR) {
-        print("Error: that path is not a directory.\n");
-        return 0;
-    }
+    spinlock_release(&tree_lock);
 
-    if (!node_path(node, cwd)) {
-        print("Error: that path is too long.\n");
-        return 0;
-    }
-
-    return 1;
+    return ok;
 }
 
 #define TAR_BLOCK 512
@@ -680,9 +774,9 @@ static int load_tar(uint32_t start, uint32_t end) {
         if (!entry_path(header, path)) {
             kprintf("File System: initrd entry has too long a name\n");
         } else if (header->typeflag == '5') {
-            fs_mkdir(path);
+            mkdir_tree(path);
         } else if (header->typeflag == '0' || header->typeflag == '\0') {
-            if (fs_write(path, (const char*)(data + offset), size) != 0) {
+            if (write_tree(path, (const char*)(data + offset), size) != 0) {
                 files++;
             }
         }
@@ -708,9 +802,14 @@ int fs_load_module(uint32_t magic, uint32_t info_addr) {
     }
 
     mods = (struct multiboot_module*)info->mods_addr;
+
+    spinlock_acquire(&tree_lock);
+
     for (uint32_t i = 0; i < info->mods_count; i++) {
         files += load_tar(mods[i].mod_start, mods[i].mod_end);
     }
+
+    spinlock_release(&tree_lock);
 
     return files;
 }

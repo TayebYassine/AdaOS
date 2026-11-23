@@ -19,6 +19,8 @@
 
 static void (*irq_handlers[IRQ_COUNT])(struct interrupt_frame* frame);
 
+static volatile int in_interrupt = 0;
+
 /* What each of the CPU's own exceptions (0x00-0x1F) is called. */
 static const char* exception_names[32] = {
     "Divide Error",                /* 0x00 */
@@ -62,7 +64,8 @@ static uint32_t read_cr2(void) {
     return value;
 }
 
-/* Report the exception and halt; there is nothing safe to return to. */
+/* Report the exception and either retire the task that raised it or,
+ * when there is nobody to blame, halt. */
 static void handle_exception(struct interrupt_frame* frame) {
     kprintf("\nAdaOS: exception %d (%s)\n", (int)frame->int_number,
             exception_names[frame->int_number]);
@@ -70,6 +73,10 @@ static void handle_exception(struct interrupt_frame* frame) {
 
     if (frame->int_number == 14) {
         kprintf("  faulting address 0x%x\n", read_cr2());
+    }
+
+    if (!in_interrupt && scheduler_kill_current(frame)) {
+        return;
     }
 
     print("System halted.\n");
@@ -92,9 +99,13 @@ void interrupt_handler(struct interrupt_frame* frame) {
 
     int irq = (int)frame->int_number - IRQ_BASE;
 
+    in_interrupt = 1;
+
     if (irq_handlers[irq] != 0) {
         irq_handlers[irq](frame);
     }
+
+    in_interrupt = 0;
 
     pic_send_eoi(irq);
 
@@ -119,6 +130,29 @@ void interrupt_enable(void) { __asm__ volatile("sti" ::: "memory"); }
 
 /* Block hardware interrupts (cli). */
 void interrupt_disable(void) { __asm__ volatile("cli" ::: "memory"); }
+
+/* Read the flags register, IF included. */
+static uint32_t read_flags(void) {
+    uint32_t flags;
+
+    __asm__ volatile("pushfl; popl %0" : "=r"(flags) : : "memory");
+
+    return flags;
+}
+
+/* Block hardware interrupts and report how they were before. */
+interrupt_flags interrupt_save(void) {
+    interrupt_flags flags = read_flags();
+
+    interrupt_disable();
+
+    return flags;
+}
+
+/* Put the flags register back the way interrupt_save() found it. */
+void interrupt_restore(interrupt_flags flags) {
+    __asm__ volatile("push %0; popfl" : : "r"(flags) : "memory", "cc");
+}
 
 /* Wake up on the next interrupt: sti followed by hlt. */
 void interrupt_wait(void) { __asm__ volatile("sti; hlt" ::: "memory"); }

@@ -24,9 +24,7 @@
 //
 // Saving rewrites everything. The tree is small; writing it whole means
 // no free list, no fragmentation, and no partial updates to reason
-// about. Data goes first and the superblock last, so an interrupted
-// save leaves the previous superblock - and a table whose entries point
-// at half-written data, which is the price of not having a journal.
+// about.
 
 #define DISKFS_MAGIC "ADAOSFS1"
 #define DISKFS_VERSION 1
@@ -198,7 +196,7 @@ static int write_data(const struct diskfs_entry* entry) {
     return 1;
 }
 
-/* Write the whole tree out: table first, then data, superblock last. */
+/* Write the whole tree out: data first, then the table, superblock last. */
 static int diskfs_save(void) {
     uint32_t next = DISKFS_DATA_START;
 
@@ -213,10 +211,6 @@ static int diskfs_save(void) {
         return 0;
     }
 
-    if (!ata_write(1, table, DISKFS_TABLE_SECTORS)) {
-        return 0;
-    }
-
     for (uint32_t i = 0; i < planned; i++) {
         if ((table[i].flags & DISKFS_DIR) != 0 || table[i].size == 0) {
             continue;
@@ -224,6 +218,10 @@ static int diskfs_save(void) {
         if (!write_data(&table[i])) {
             return 0;
         }
+    }
+
+    if (!ata_write(1, table, DISKFS_TABLE_SECTORS)) {
+        return 0;
     }
 
     saved_entries = planned;

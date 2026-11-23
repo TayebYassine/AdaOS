@@ -5,6 +5,7 @@
 #include "libc.h"
 #include "paging.h"
 #include "pmm.h"
+#include "spinlock.h"
 
 // The kernel heap: kmalloc() and kfree(), so the kernel no longer has
 // to size its data structures at compile time (the shell's fixed
@@ -21,6 +22,10 @@
 // whether it is free, blocks are split when an allocation would leave
 // a useful remainder behind, and kfree() merges neighbours so small
 // allocations do not fragment the heap permanently.
+//
+// The block list is shared, so every entry point holds heap_lock: a
+// second task - or an interrupt handler that allocates - would otherwise
+// walk the list while it is being split, and the two would corrupt it.
 
 /* Where the heap starts in virtual space: high up, well clear of the
  * kernel image at 1 MiB and of anything the identity map covers. */
@@ -46,6 +51,9 @@ struct heap_block {
     struct heap_block* next;
     uint32_t padding;
 };
+
+/* Guards every field below, the block list above all. */
+static struct spinlock heap_lock;
 
 /* Head of the block list, in address order. */
 static struct heap_block* first_block = 0;
@@ -118,6 +126,35 @@ static int heap_grow(uint32_t bytes) {
     return 0;
 }
 
+/* First fit: cut a block of "need" bytes out of the list, or 0 when
+ * nothing is big enough. Runs with the lock held. */
+static void* take_block(uint32_t need) {
+    for (struct heap_block* block = first_block; block != 0;
+         block = block->next) {
+        if (!block->free || block->size < need) {
+            continue;
+        }
+
+        if (block->size >= need + sizeof(struct heap_block) + HEAP_MIN_SPLIT) {
+            struct heap_block* rest =
+                (struct heap_block*)((uint8_t*)block +
+                                     sizeof(struct heap_block) + need);
+            rest->size = block->size - need - sizeof(struct heap_block);
+            rest->free = 1;
+            rest->next = block->next;
+            rest->padding = 0;
+
+            block->next = rest;
+            block->size = need;
+        }
+
+        block->free = 0;
+        return (void*)((uint8_t*)block + sizeof(struct heap_block));
+    }
+
+    return 0;
+}
+
 /* Allocate "size" bytes, or 0 when the heap cannot grow. */
 void* kmalloc(size_t size) {
     if (size == 0) {
@@ -125,30 +162,15 @@ void* kmalloc(size_t size) {
     }
 
     uint32_t need = align_up((uint32_t)size, HEAP_ALIGNMENT);
+    void* result = 0;
+
+    spinlock_acquire(&heap_lock);
 
     for (int attempt = 0; attempt < 2; attempt++) {
-        for (struct heap_block* block = first_block; block != 0;
-             block = block->next) {
-            if (!block->free || block->size < need) {
-                continue;
-            }
+        result = take_block(need);
 
-            if (block->size >=
-                need + sizeof(struct heap_block) + HEAP_MIN_SPLIT) {
-                struct heap_block* rest =
-                    (struct heap_block*)((uint8_t*)block +
-                                         sizeof(struct heap_block) + need);
-                rest->size = block->size - need - sizeof(struct heap_block);
-                rest->free = 1;
-                rest->next = block->next;
-                rest->padding = 0;
-
-                block->next = rest;
-                block->size = need;
-            }
-
-            block->free = 0;
-            return (void*)((uint8_t*)block + sizeof(struct heap_block));
+        if (result != 0) {
+            break;
         }
 
         if (heap_grow(need) != 0) {
@@ -156,7 +178,9 @@ void* kmalloc(size_t size) {
         }
     }
 
-    return 0;
+    spinlock_release(&heap_lock);
+
+    return result;
 }
 
 /* Give an allocation back and merge it with free neighbours. */
@@ -167,6 +191,8 @@ void kfree(void* ptr) {
 
     struct heap_block* block =
         (struct heap_block*)((uint8_t*)ptr - sizeof(struct heap_block));
+
+    spinlock_acquire(&heap_lock);
 
     block->free = 1;
 
@@ -184,6 +210,8 @@ void kfree(void* ptr) {
         previous->size += sizeof(struct heap_block) + block->size;
         previous->next = block->next;
     }
+
+    spinlock_release(&heap_lock);
 }
 
 /* Totals for the "mem" command. */
@@ -191,6 +219,8 @@ const struct heap_stats* kmalloc_get_stats(void) {
     uint32_t used = 0;
     uint32_t free_bytes = 0;
     uint32_t blocks = 0;
+
+    spinlock_acquire(&heap_lock);
 
     for (struct heap_block* block = first_block; block != 0;
          block = block->next) {
@@ -207,6 +237,8 @@ const struct heap_stats* kmalloc_get_stats(void) {
     stats.used_bytes = used;
     stats.free_bytes = free_bytes;
     stats.block_count = blocks;
+
+    spinlock_release(&heap_lock);
 
     return &stats;
 }

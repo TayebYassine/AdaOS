@@ -22,13 +22,17 @@
 // to hand out addresses that do *not* exist in physical memory - which
 // is exactly what the heap in kmalloc.c does with 0xC0000000.
 //
-// The identity map covers the first PAGING_IDENTITY_LIMIT bytes, or
-// all usable RAM if the machine has less. Everything the kernel uses
-// to *build* mappings - page tables, newly allocated frames - has to
-// come from inside it, because the table walk itself needs the frame
-// to be reachable. The physical allocator hands out low pages first,
-// so that holds until a lot of memory is in use; when the heap and the
-// drivers start needing more, raise the limit.
+// The identity map covers the first PAGING_IDENTITY_LIMIT bytes, or up
+// to the highest usable address if the machine has less. Everything the
+// kernel uses to *build* mappings - page tables, newly allocated frames
+// - has to come from inside it, because the table walk itself needs the
+// frame to be reachable. The map is therefore bounded by the top of
+// memory, not by how many pages fit in it: a machine with holes in its
+// memory map can have its last frames well above its page count, and a
+// frame from up there would fault the moment memset() touched it.
+// Whatever remains beyond the map is then out of the allocator's reach
+// too, along with anything above PAGING_IDENTITY_LIMIT; raise the limit
+// when the heap and the drivers start needing more.
 
 /* How much low memory the identity map covers: 64 MiB. */
 #define PAGING_IDENTITY_LIMIT (64u * 1024u * 1024u)
@@ -107,9 +111,9 @@ void paging_init(void) {
     stats.page_tables = 0;
     stats.mapped_pages = 0;
 
-    uint32_t usable = memory->available_kb * 1024u;
-    uint32_t limit =
-        usable < PAGING_IDENTITY_LIMIT ? usable : PAGING_IDENTITY_LIMIT;
+    uint32_t limit = memory->usable_end < PAGING_IDENTITY_LIMIT
+                         ? memory->usable_end
+                         : PAGING_IDENTITY_LIMIT;
     limit &= 0xFFFFF000u;
 
     if (limit == 0) {
@@ -127,6 +131,8 @@ void paging_init(void) {
 
     identity_bytes = limit;
     stats.identity_bytes = limit;
+
+    pmm_set_alloc_ceiling(limit);
 
     __asm__ volatile("mov %0, %%cr3"
                      :

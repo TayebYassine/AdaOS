@@ -54,7 +54,7 @@ ISR_NO_ERROR 26        ; reserved
 ISR_NO_ERROR 27        ; reserved
 ISR_NO_ERROR 28        ; reserved
 ISR_NO_ERROR 29        ; reserved
-ISR_NO_ERROR 30        ; security exception
+ISR_ERROR    30        ; security exception (error code)
 ISR_NO_ERROR 31        ; reserved
 
 ; 0x20-0x2F: the 16 hardware IRQs, after pic.c remapped them.
