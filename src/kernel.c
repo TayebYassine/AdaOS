@@ -1,5 +1,6 @@
 #include <stdint.h>
 
+#include "clock.h"
 #include "diskfs.h"
 #include "fs.h"
 #include "gdt.h"
@@ -17,8 +18,8 @@
 
 // Kernel entry point: brings up the CPU tables (GDT, IDT), the
 // interrupt controller, the memory layers (physical pages, paging, the
-// heap), the file system and the disk behind it, the drivers and the
-// scheduler, which then enters the shell.
+// heap), the file system and the disk behind it, the drivers, the wall
+// clock and the scheduler, which then enters the shell.
 // Called once by boot.asm's _start.
 
 /* Entry point of AdaOS. */
@@ -41,6 +42,7 @@ void kernel_main(uint32_t magic, uint32_t info_addr) {
     gdt_init();
     idt_init();
     interrupt_init();
+    clock_init();
     timer_init();
     keyboard_init();
 

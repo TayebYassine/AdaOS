@@ -42,9 +42,12 @@ AdaOS has been tested with QEMU (`qemu-system-i386`) and VirtualBox 7.2. In Virt
 | `pwd`             | Show the current directory                      |
 | `reboot`          | Restart the machine                             |
 | `rm <path>`       | Remove a file or a directory and its contents   |
+| `setdate`         | Set the date                                    |
+| `settime`         | Set the time of day                              |
 | `shutdown`        | Power off the machine                           |
 | `sleep <sec>`     | Pause for a number of seconds                   |
 | `tasks`           | Show the running tasks                          |
+| `time`            | Show the date and the time                      |
 | `uptime`          | Show how long AdaOS has been running            |
 | `write <file>`    | Edit a file in the full-screen editor           |
 

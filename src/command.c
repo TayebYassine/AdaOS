@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "ata.h"
+#include "clock.h"
 #include "diskfs.h"
 #include "editor.h"
 #include "fs.h"
@@ -14,6 +15,7 @@
 #include "pmm.h"
 #include "scheduler.h"
 #include "screen.h"
+#include "shell.h"
 #include "timer.h"
 
 // The shell's command dispatcher: splits the typed line into words,
@@ -45,13 +47,16 @@ enum command_id {
     CMD_MKDIR,
     CMD_RM,
     CMD_DISK,
+    CMD_TIME,
+    CMD_SETTIME,
+    CMD_SETDATE,
     CMD_NOT_FOUND = -1,
 };
 
 static const char* command_names[] = {
     "print", "help", "shutdown", "reboot", "clear", "uptime", "sleep", "mem",
     "tasks", "ls",   "cd",       "pwd",    "cat",   "write",  "mkdir", "rm",
-    "disk"};
+    "disk",  "time", "settime",  "setdate"};
 
 static const char* command_help[] = {
     "cat <path>   - print a file",
@@ -66,9 +71,12 @@ static const char* command_help[] = {
     "pwd          - show the current directory",
     "reboot       - restart the computer",
     "rm <path>    - remove a file or directory",
+    "setdate      - set the date",
+    "settime      - set the time of day",
     "shutdown     - turn off the computer",
     "sleep <sec>  - pause for a number of seconds",
     "tasks        - show the running tasks",
+    "time         - show the date and the time",
     "uptime       - how long AdaOS has been running",
     "write <file> - edit a file"};
 
@@ -157,6 +165,25 @@ static int parse_uint(const char* word, uint32_t* value) {
     return digits;
 }
 
+/* Read exactly "count" digits at text[at] and turn them into a number;
+ * returns 0 when they are not all digits. */
+static int parse_digits(const char* text, int at, int count, int* value) {
+    int result = 0;
+
+    for (int i = 0; i < count; i++) {
+        char c = text[at + i];
+
+        if (c < '0' || c > '9') {
+            return 0;
+        }
+
+        result = result * 10 + (c - '0');
+    }
+
+    *value = result;
+    return 1;
+}
+
 /* Power off the machine through the ACPI "S5" (soft off) state. */
 static void command_shutdown(void) {
     outw(0x604, 0x2000);   // QEMU / KVM
@@ -234,6 +261,7 @@ void command_execute(char* line) {
             break;
         case CMD_CLEAR:
             screen_clear();
+            clock_draw();
             break;
         case CMD_UPTIME: {
             uint32_t total = timer_seconds();
@@ -417,6 +445,78 @@ void command_execute(char* line) {
                     (int)(diskfs_used_sectors() / 2),
                     (int)diskfs_entry_count(),
                     (int)diskfs_entry_capacity());
+            break;
+        }
+        case CMD_TIME: {
+            char stamp[24];
+
+            clock_stamp(stamp, 1);
+            kprintf("%s\n", stamp);
+            break;
+        }
+        case CMD_SETTIME: {
+            char text[SHELL_LINE_MAX];
+            int hour = 0;
+            int minute = 0;
+            int second = 0;
+            int pm = 0;
+
+            print("Please enter the time following the format HH:MM:SS: ");
+            shell_read_line(text);
+
+            if ((int)strlen(text) != 8 || text[2] != ':' || text[5] != ':' ||
+                !parse_digits(text, 0, 2, &hour) ||
+                !parse_digits(text, 3, 2, &minute) ||
+                !parse_digits(text, 6, 2, &second) || hour < 1 || hour > 12 ||
+                minute > 59 || second > 59) {
+                print("Error: Incorrect format\n");
+                break;
+            }
+
+            print("Is the time AM or PM? ");
+            shell_read_line(text);
+
+            if (strcmp(text, "AM") == 0 || strcmp(text, "am") == 0) {
+                pm = 0;
+            } else if (strcmp(text, "PM") == 0 || strcmp(text, "pm") == 0) {
+                pm = 1;
+            } else {
+                print("Error: the time must be AM or PM.\n");
+                break;
+            }
+
+            if (hour == 12) {
+                hour = 0;
+            }
+            if (pm) {
+                hour += 12;
+            }
+
+            clock_set_time(hour, minute, second);
+            print("Time set.\n");
+            break;
+        }
+        case CMD_SETDATE: {
+            char text[SHELL_LINE_MAX];
+            int month = 0;
+            int day = 0;
+            int year = 0;
+
+            print("Please enter the date following the format MM-DD-YYYY: ");
+            shell_read_line(text);
+
+            if ((int)strlen(text) != 10 || text[2] != '-' || text[5] != '-' ||
+                !parse_digits(text, 0, 2, &month) ||
+                !parse_digits(text, 3, 2, &day) ||
+                !parse_digits(text, 6, 4, &year) || year < 1 || month < 1 ||
+                month > 12 || day < 1 ||
+                day > clock_days_in_month(year, month)) {
+                print("Error: Incorrect format\n");
+                break;
+            }
+
+            clock_set_date(year, month, day);
+            print("Date set.\n");
             break;
         }
         default: {

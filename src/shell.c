@@ -1,5 +1,6 @@
 #include "shell.h"
 
+#include "clock.h"
 #include "command.h"
 #include "keyboard.h"
 #include "libc.h"
@@ -9,12 +10,10 @@
 // keyboard (with cursor editing and Up/Down command history), and
 // hands each finished line to command_execute().
 
-/* Longest line the user can type */
-#define LINE_MAX 128
 /* Number of past lines to remember */
 #define HISTORY_SIZE 8
 
-static char history[HISTORY_SIZE][LINE_MAX];
+static char history[HISTORY_SIZE][SHELL_LINE_MAX];
 static int history_count = 0;
 static int history_start = 0;
 
@@ -39,12 +38,13 @@ static void history_push(const char* line) {
 }
 
 /* Read one line: characters echo as typed, Left/Right move the cursor,
- * Up/Down walk the history, Enter finishes the line. */
-static void read_line(char* line) {
+ * Up/Down walk the history, Enter finishes the line. The commands that ask
+ * a question of their own (settime, setdate) use this too. */
+void shell_read_line(char* line) {
     int length = 0;
     int cursor = 0;
     int view = history_count;
-    char fresh[LINE_MAX];
+    char fresh[SHELL_LINE_MAX];
     int fresh_length = 0;
     int fresh_cursor = 0;
 
@@ -140,7 +140,7 @@ static void read_line(char* line) {
         // Normal key: insert it at the cursor and show it right away.
         // Control codes are not part of a command line.
         if (key >= ' ' && key < KEY_UP) {
-            if (length < LINE_MAX - 1) {
+            if (length < SHELL_LINE_MAX - 1) {
                 // Shift the rest of the line one position right.
                 for (int i = length; i >= cursor; i--) {
                     line[i + 1] = line[i];  // includes the '\0'
@@ -161,14 +161,17 @@ static void read_line(char* line) {
 
 /* Print the banner, then loop forever: prompt, read a line, execute it. */
 void shell_run(void) {
-    char line[LINE_MAX];
+    char line[SHELL_LINE_MAX];
+
+    screen_set_top(1);
+    clock_resume();
 
     print("Welcome to AdaOS!\n\n");
     print("Type 'help' to see the available commands.\n\n");
 
     for (;;) {
         print("> ");
-        read_line(line);
+        shell_read_line(line);
 
         if (line[0] != '\0') {
             history_push(line);

@@ -30,6 +30,9 @@
 static int cursor_row = 0;
 static int cursor_col = 0;
 
+/* How many rows at the top print() must not touch. */
+static int top_row = 0;
+
 /* Turn a (row, column) pair into an index into the VGA memory array. */
 static int cell_index(int row, int col) { return row * SCREEN_WIDTH + col; }
 
@@ -53,7 +56,7 @@ static void clear_cells(void) {
 static void scroll(void) {
     volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;
 
-    for (int row = 1; row < SCREEN_HEIGHT; row++) {
+    for (int row = top_row + 1; row < SCREEN_HEIGHT; row++) {
         for (int col = 0; col < SCREEN_WIDTH; col++) {
             vga[cell_index(row - 1, col)] = vga[cell_index(row, col)];
         }
@@ -149,9 +152,27 @@ static void put_char(char c) {
 /* Blank the whole screen and put the cursor back at the top-left. */
 void screen_clear(void) {
     clear_cells();
-    cursor_row = 0;
+    cursor_row = top_row;
     cursor_col = 0;
     update_cursor();
+}
+
+/* Keep the top rows out of print()'s way. */
+void screen_set_top(int rows) {
+    if (rows < 0) {
+        rows = 0;
+    }
+    if (rows >= SCREEN_HEIGHT) {
+        rows = SCREEN_HEIGHT - 1;
+    }
+
+    top_row = rows;
+
+    if (cursor_row < top_row) {
+        cursor_row = top_row;
+        cursor_col = 0;
+        update_cursor();
+    }
 }
 
 /* Print a string at the cursor. */

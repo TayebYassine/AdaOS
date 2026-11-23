@@ -39,6 +39,10 @@ void screen_puts_at(int row, int col, const char* text, uint8_t attribute);
 /* Put the hardware cursor on a cell, clamped to the screen. */
 void screen_move_to(int row, int col);
 
+/* Keep the top "rows" rows out of print()'s way: the cursor goes below
+ * them, and scrolling stops at them instead of at the top edge. */
+void screen_set_top(int rows);
+
 /* Copy the text buffer into "cells" and remember the cursor. */
 void screen_save(uint16_t* cells, int* row, int* col);
 

@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include "clock.h"
 #include "fs.h"
 #include "keyboard.h"
 #include "kmalloc.h"
@@ -14,7 +15,8 @@
 // when the editor closes, so "write" leaves the shell exactly as it found
 // it. While it runs the screen is repainted from three parts:
 //
-//   row 0         title bar: "Editing <name> - <bytes> bytes"
+//   row 0         title bar: "Editing <name> - <bytes> bytes" (the shell's
+//                 clock bar is paused meanwhile: this row is ours)
 //   rows 1-23     the text itself
 //   row 24        status bar: ^S and ^E on the left, the paging markers
 //                 "<" and ">" on the right
@@ -483,6 +485,8 @@ void editor_open(const char* file) {
 
     screen_save(saved_cells, &saved_row, &saved_col);
 
+    clock_pause();
+
     for (;;) {
         render();
 
@@ -513,6 +517,8 @@ void editor_open(const char* file) {
     }
 
     screen_restore(saved_cells, saved_row, saved_col);
+
+    clock_resume();
 
     kfree(lines);
     lines = 0;
