@@ -110,30 +110,46 @@ static int find_command(const char* name) {
     return CMD_NOT_FOUND;
 }
 
-/* Split a line into words separated by spaces. */
+/* Split a line into words separated by spaces. A word may be wrapped in
+ * double quotes to keep its spaces, as in  write "my file.txt" ; the
+ * quotes themselves are dropped. Words are packed back into the line as
+ * they are read, so "w" (the write position) never overtakes "i". */
 static int split(char* line, char* words[], int max) {
     int count = 0;
     int i = 0;
+    int w = 0;
 
     while (line[i] == ' ') {
         i++;
     }
 
     while (line[i] != '\0' && count < max) {
-        words[count] = &line[i];
+        int quoted = 0;
+
+        words[count] = &line[w];
         count++;
 
-        while (line[i] != '\0' && line[i] != ' ') {
+        while (line[i] != '\0') {
+            if (line[i] == '"') {
+                quoted = !quoted;
+                i++;
+                continue;
+            }
+            if (line[i] == ' ' && !quoted) {
+                i++;
+                break;
+            }
+
+            line[w] = line[i];
+            w++;
             i++;
         }
 
-        if (line[i] == ' ') {
-            line[i] = '\0';
-            i++;
+        line[w] = '\0';
+        w++;
 
-            while (line[i] == ' ') {
-                i++;
-            }
+        while (line[i] == ' ') {
+            i++;
         }
     }
 
