@@ -159,9 +159,7 @@ static struct task* task_create(const char* name, void (*entry)(void)) {
     task->state = TASK_READY;
     task->name = name;
 
-    // The frame sits at the very top of the stack, 16-byte aligned so
-    // the task starts with a sane stack pointer for C.
-    uint32_t top = ((uint32_t)stack + TASK_STACK_SIZE) & ~0xFu;
+    uint32_t top = (((uint32_t)stack + TASK_STACK_SIZE) & ~0xFu) - 4u;
     task->esp = build_frame((uint32_t*)(top - FRAME_DWORDS * 4));
 
     tasks[task_count] = task;

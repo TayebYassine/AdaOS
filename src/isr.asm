@@ -125,3 +125,5 @@ isr_stub_table:
     dd isr36, isr37, isr38, isr39     ; 0x24-0x27 IRQ4-7
     dd isr40, isr41, isr42, isr43     ; 0x28-0x2B IRQ8-11
     dd isr44, isr45, isr46, isr47     ; 0x2C-0x2F IRQ12-15
+
+section .note.GNU-stack noalloc noexec nowrite progbits

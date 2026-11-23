@@ -22,7 +22,9 @@ done
 for src in "$SRC"/*.c; do
     obj="$BUILD/$(basename "${src%.c}.o")"
     # -fno-builtin: we define strlen/memcpy/... ourselves in libc.c
-    gcc -m32 -ffreestanding -fno-builtin -fno-pie -fno-stack-protector -c "$src" -o "$obj"
+    # -fno-asynchronous-unwind-tables: no .eh_frame, nothing unwinds in a kernel
+    gcc -m32 -ffreestanding -fno-builtin -fno-pie -fno-stack-protector \
+        -fno-asynchronous-unwind-tables -c "$src" -o "$obj"
     OBJECTS+=("$obj")
 done
 ld -m elf_i386 -T "$SRC/linker.ld" \

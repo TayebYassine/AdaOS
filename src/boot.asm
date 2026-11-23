@@ -29,3 +29,5 @@ _start:
     cli
     hlt                    ; kernel_main returned, which it never should
     jmp .hang
+
+section .note.GNU-stack noalloc noexec nowrite progbits

@@ -115,13 +115,20 @@ static void print_padded(unsigned int value, int width) {
 }
 
 /* Read a decimal number at the start of a word; returns the digit count (0 = no
- * number). */
+ * number). Parsing stops after 10 digits, and stops early if the value would
+ * not fit in a uint32_t. */
 static int parse_uint(const char* word, uint32_t* value) {
     uint32_t result = 0;
     int digits = 0;
 
-    while (word[digits] >= '0' && word[digits] <= '9') {
-        result = result * 10 + (uint32_t)(word[digits] - '0');
+    while (digits < 10 && word[digits] >= '0' && word[digits] <= '9') {
+        uint32_t digit = (uint32_t)(word[digits] - '0');
+
+        if (result > (UINT32_MAX - digit) / 10u) {
+            break;
+        }
+
+        result = result * 10 + digit;
         digits++;
     }
 

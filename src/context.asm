@@ -26,3 +26,5 @@ context_switch:
     popa
     add esp, 8          ; drop the interrupt number and error code
     iret                ; and resume the new task where it stopped
+
+section .note.GNU-stack noalloc noexec nowrite progbits
