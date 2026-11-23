@@ -133,7 +133,7 @@ static int parse_uint(const char* word, uint32_t* value) {
 static void command_shutdown(void) {
     outw(0x604, 0x2000);   // QEMU / KVM
     outw(0xB004, 0x2000);  // Bochs / older QEMU
-    outw(0x4004, 0x0034);  // VirtualBox
+    outw(0x4004, 0x3400);  // VirtualBox
 
     print("It is now safe to turn off your computer.\n");
 
