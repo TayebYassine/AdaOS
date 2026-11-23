@@ -35,6 +35,15 @@ ld -m elf_i386 -T "$SRC/linker.ld" \
 echo "[4/4] Booting on QEMU..."
 # QEMU loads the starting files itself and passes them as a module.
 tar -C "$ROOT/files" -cf "$BUILD/init.tar" .
+
+# The disk the file system lives on: 16 MiB, made blank on the first run
+# and kept afterwards, so files survive a reboot. Delete it to start over.
+DISK="$BUILD/disk.img"
+if [ ! -f "$DISK" ]; then
+    dd if=/dev/zero of="$DISK" bs=1M count=16 status=none
+fi
+
 # Any extra arguments you pass to build.sh are forwarded to QEMU,
 # e.g.:  ./build.sh -display curses   or   ./build.sh -no-reboot
-exec qemu-system-i386 -kernel "$BUILD/kernel.elf" -initrd "$BUILD/init.tar" "$@"
+exec qemu-system-i386 -kernel "$BUILD/kernel.elf" -initrd "$BUILD/init.tar" \
+    -drive file="$DISK",format=raw,if=ide "$@"

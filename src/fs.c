@@ -20,6 +20,9 @@ static char cwd[FS_PATH_MAX] = "/";
 
 static struct fs_node* root = 0;
 
+/* Set when the tree changed since it was last saved to the disk. */
+static int dirty = 0;
+
 /* A name the tree accepts: not empty, not too long, not "." or "..". */
 static int name_ok(const char* name) {
     if (name[0] == '\0' || strlen(name) >= FS_NAME_MAX) {
@@ -250,7 +253,32 @@ static int node_path(struct fs_node* node, char* out) {
 void fs_init(void) {
     root = new_node("/", FS_DIR);
     memcpy(cwd, "/", 2);
+    dirty = 0;
 }
+
+void fs_reset(void) {
+    struct fs_node* child;
+
+    if (root == 0) {
+        return;
+    }
+
+    child = root->children;
+    while (child != 0) {
+        struct fs_node* next = child->sibling;
+
+        free_tree(child);
+        child = next;
+    }
+
+    root->children = 0;
+    memcpy(cwd, "/", 2);
+    dirty = 0;
+}
+
+int fs_dirty(void) { return dirty; }
+
+void fs_mark_clean(void) { dirty = 0; }
 
 struct fs_node* fs_root(void) { return root; }
 
@@ -350,6 +378,7 @@ struct fs_node* fs_mkdir(const char* path) {
     node = new_node(name, FS_DIR);
     if (node != 0) {
         attach_child(parent, node);
+        dirty = 1;
     }
 
     return node;
@@ -393,7 +422,12 @@ struct fs_node* fs_write(const char* path, const char* data, uint32_t len) {
             return 0;
         }
 
-        return fill_file(existing, data, len) ? existing : 0;
+        if (!fill_file(existing, data, len)) {
+            return 0;
+        }
+
+        dirty = 1;
+        return existing;
     }
 
     parent = walk(abs, name, 1);
@@ -417,6 +451,7 @@ struct fs_node* fs_write(const char* path, const char* data, uint32_t len) {
     }
 
     attach_child(parent, node);
+    dirty = 1;
 
     return node;
 }
@@ -442,6 +477,7 @@ int fs_remove(const char* path) {
 
     detach_child(node);
     free_tree(node);
+    dirty = 1;
 
     if (walk(cwd, 0, 0) == 0) {
         memcpy(cwd, "/", 2);
@@ -471,10 +507,6 @@ int fs_chdir(const char* path) {
 
     return 1;
 }
-
-// The tar reader: unpack the module GRUB hands the kernel into the tree.
-// Only the fields all tar flavours share are read - name, size, type,
-// checksum - so a plain "tar cf" archive is enough.
 
 #define TAR_BLOCK 512
 #define TAR_CHECKSUM_OFFSET 148

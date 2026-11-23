@@ -55,3 +55,4 @@ grub-mkrescue -o "$ISO_OUT" "$ISO_DIR"
 
 echo "Done: $ISO_OUT"
 echo "In VirtualBox: create a VM -> Storage -> add this ISO as an optical disk -> boot."
+echo "Add a hard disk to the VM as well, or the file system stays in RAM."

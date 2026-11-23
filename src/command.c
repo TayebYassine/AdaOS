@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "ata.h"
+#include "diskfs.h"
 #include "editor.h"
 #include "fs.h"
 #include "io.h"
@@ -42,17 +44,20 @@ enum command_id {
     CMD_WRITE,
     CMD_MKDIR,
     CMD_RM,
+    CMD_DISK,
     CMD_NOT_FOUND = -1,
 };
 
 static const char* command_names[] = {
     "print", "help", "shutdown", "reboot", "clear", "uptime", "sleep", "mem",
-    "tasks", "ls",   "cd",       "pwd",    "cat",   "write",  "mkdir", "rm"};
+    "tasks", "ls",   "cd",       "pwd",    "cat",   "write",  "mkdir", "rm",
+    "disk"};
 
 static const char* command_help[] = {
     "cat <path>   - print a file",
     "cd <path>    - change the current directory",
     "clear        - clear the screen",
+    "disk         - show the disk and its file system",
     "help         - show this list of commands",
     "ls [path]    - list a directory",
     "mem          - show RAM, paging, the heap and the kernel size",
@@ -398,9 +403,27 @@ void command_execute(char* line) {
             }
             fs_remove(words[1]);
             break;
+        case CMD_DISK: {
+            if (!diskfs_present()) {
+                print("No disk on the primary IDE bus.\n");
+                break;
+            }
+
+            kprintf("Disk: %s\n", ata_model());
+            kprintf("Size: %d MB (%d sectors)\n",
+                    (int)(diskfs_total_sectors() / 2048),
+                    (int)diskfs_total_sectors());
+            kprintf("Used: %d KB in %d of %d entries\n",
+                    (int)(diskfs_used_sectors() / 2),
+                    (int)diskfs_entry_count(),
+                    (int)diskfs_entry_capacity());
+            break;
+        }
         default: {
             print("Error: command not found.\n");
             break;
         }
     }
+    
+    diskfs_sync();
 }

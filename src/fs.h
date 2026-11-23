@@ -18,7 +18,6 @@ enum fs_kind {
 struct fs_node {
     char name[FS_NAME_MAX];
     enum fs_kind kind;
-    /* bytes of content; directories keep no data */
     uint32_t size;
     char* data;
     struct fs_node* parent;
@@ -28,6 +27,15 @@ struct fs_node {
 
 /* Build the empty tree with just "/" in it; call once after the heap. */
 void fs_init(void);
+
+/* Throw the tree away, leaving just "/", and go back to the root. */
+void fs_reset(void);
+
+/* Did anything change since the tree was last saved to the disk? */
+int fs_dirty(void);
+
+/* Record that the tree in memory matches the disk again. */
+void fs_mark_clean(void);
 
 /* Unpack the multiboot tar module into the tree; returns files added. */
 int fs_load_module(uint32_t magic, uint32_t info_addr);
