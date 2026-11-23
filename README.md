@@ -46,6 +46,7 @@ AdaOS has been tested with QEMU (`qemu-system-i386`) and VirtualBox 7.2. In Virt
 | `settime`         | Set the time of day                              |
 | `shutdown`        | Power off the machine                           |
 | `sleep <sec>`     | Pause for a number of seconds                   |
+| `snake`           | Play the snake game                             |
 | `tasks`           | Show the running tasks                          |
 | `time`            | Show the date and the time                      |
 | `uptime`          | Show how long AdaOS has been running            |

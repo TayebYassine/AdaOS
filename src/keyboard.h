@@ -8,10 +8,14 @@
 #define KEY_RIGHT 0x103
 
 #define KEY_CTRL_E 0x05
+#define KEY_CTRL_R 0x12
 #define KEY_CTRL_S 0x13
 
 /* Start receiving keystrokes on IRQ1; call once, after interrupt_init(). */
 void keyboard_init(void);
+
+/* Return the oldest key without waiting, or 0 if no key is ready. */
+int keyboard_poll(void);
 
 /* Block until a key is pressed, then return its ASCII character ('\n', '\b'),
  * a control code (KEY_CTRL_*), or a KEY_* value. Handles Shift, Caps Lock

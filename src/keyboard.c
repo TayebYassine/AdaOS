@@ -219,6 +219,9 @@ static int buffer_pop(void) {
     return key;
 }
 
+/* Return the oldest key without waiting, or 0 if no key is ready. */
+int keyboard_poll(void) { return buffer_pop(); }
+
 /* Block until a key is available, then return it. */
 int keyboard_getchar(void) {
     for (;;) {

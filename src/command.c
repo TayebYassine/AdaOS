@@ -16,6 +16,7 @@
 #include "scheduler.h"
 #include "screen.h"
 #include "shell.h"
+#include "snake.h"
 #include "timer.h"
 
 // The shell's command dispatcher: splits the typed line into words,
@@ -52,13 +53,14 @@ enum command_id {
     CMD_TIME,
     CMD_SETTIME,
     CMD_SETDATE,
+    CMD_SNAKE,
     CMD_NOT_FOUND = -1,
 };
 
 static const char* command_names[] = {
     "print", "help", "shutdown", "reboot", "clear", "uptime", "sleep", "mem",
     "tasks", "ls",   "cd",       "pwd",    "cat",   "write",  "mkdir", "rm",
-    "disk",  "time", "settime",  "setdate"};
+    "disk",  "time", "settime",  "setdate", "snake"};
 
 static const char* command_help[] = {
     "cat <path>   - print a file",
@@ -77,6 +79,7 @@ static const char* command_help[] = {
     "settime      - set the time of day",
     "shutdown     - turn off the computer",
     "sleep <sec>  - pause for a number of seconds",
+    "snake        - play the snake game",
     "tasks        - show the running tasks",
     "time         - show the date and the time",
     "uptime       - how long AdaOS has been running",
@@ -545,6 +548,9 @@ void command_execute(char* line) {
             print("Date set.\n");
             break;
         }
+        case CMD_SNAKE:
+            snake_run();
+            break;
         default: {
             print("Error: command not found.\n");
             break;
