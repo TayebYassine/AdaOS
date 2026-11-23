@@ -18,13 +18,17 @@ for src in "$SRC"/*.asm; do
     nasm -f elf32 "$src" -o "$obj"
     OBJECTS+=("$obj")
 done
+# The version the screen shows, stamped with the date of this build
+VERSION="AdaOS-$(date +%y.%m.%d)"
+
 # Compile every .c file in src/ into a matching .o in build/
 for src in "$SRC"/*.c; do
     obj="$BUILD/$(basename "${src%.c}.o")"
     # -fno-builtin: we define strlen/memcpy/... ourselves in libc.c
     # -fno-asynchronous-unwind-tables: no .eh_frame, nothing unwinds in a kernel
     gcc -m32 -ffreestanding -fno-builtin -fno-pie -fno-stack-protector \
-        -fno-asynchronous-unwind-tables -c "$src" -o "$obj"
+        -fno-asynchronous-unwind-tables -DADAOS_VERSION="\"$VERSION\"" \
+        -c "$src" -o "$obj"
     OBJECTS+=("$obj")
 done
 ld -m elf_i386 -T "$SRC/linker.ld" \

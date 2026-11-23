@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./ada.jpeg" alt="AdaOS logo" width="128" />
+  <img src="./ada.png" alt="AdaOS logo" width="128" />
 </p>
 
 <h1 align="center">AdaOS</h1>
@@ -16,7 +16,7 @@ AdaOS is a tiny command-line operating system for 32-bit x86, written in C and A
 > AdaOS is still experimental and may have bugs. Please report if you encounter any.
 > Run it in a virtual machine such as [VirtualBox](https://www.virtualbox.org/) or [QEMU](https://www.qemu.org/) rather than on real hardware.
 
-## Minimum requirements
+## Requirements
 
 List of minimum hardware requirements for AdaOS to work properly.
 

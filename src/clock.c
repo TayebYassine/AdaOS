@@ -45,6 +45,12 @@
 /* Room for the longest stamp, "MM-DD-YYYY HH:MM:SS PM", plus the '\0'. */
 #define STAMP_MAX 24
 
+/* The version the build scripts stamp into the kernel; the plain name is
+ * used when the kernel is compiled by hand. */
+#ifndef ADAOS_VERSION
+#define ADAOS_VERSION "AdaOS"
+#endif
+
 static struct clock_time now;
 
 /* Set while the editor is on screen: its title bar owns the top row. */
@@ -428,7 +434,8 @@ void clock_stamp(char* out, int ampm) {
     out[at] = '\0';
 }
 
-/* Paint the shell's top row: the date and time, right up against the edge. */
+/* Paint the shell's top row: the version at the left edge, the date and
+ * time right up against the right one. */
 void clock_draw(void) {
     char stamp[STAMP_MAX];
 
@@ -439,6 +446,7 @@ void clock_draw(void) {
     clock_stamp(stamp, 0);
 
     screen_fill_row(0, ' ', COLOR_BAR);
+    screen_puts_at(0, 0, ADAOS_VERSION, COLOR_BAR);
     screen_puts_at(0, SCREEN_COLS - (int)strlen(stamp), stamp, COLOR_BAR);
 }
 
