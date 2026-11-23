@@ -12,21 +12,56 @@
 // so the same messages can be watched on the screen or captured to a
 // file. It understands a small set of format specifiers (%s, %c, %d,
 // %x, %%) - enough for messages that contain numbers.
+//
+// The text is collected in a small buffer and handed to print() and
+// serial_write() in batches. That is not just tidiness: print_char()
+// programs the VGA CRT controller to move the hardware cursor, and a
+// virtual machine on a slower host can turn each of those port writes
+// into a display update. One update per line instead of one per
+// character is the difference between instant and visible lag.
 
-/* Send one character to the screen and to the serial console. */
-static void kputc(char c) {
-    print_char(c);
-    serial_write_char(c);
+/* Characters collected before they are shown. */
+#define KPRINTF_BATCH 192
+
+/* One kprintf's output on its way to the screen. It lives on the stack,
+ * so a message printed from an interrupt cannot trample the one the
+ * shell is in the middle of. */
+struct output {
+    char text[KPRINTF_BATCH];
+    int length;
+};
+
+/* Show what has been collected so far and start again. */
+static void flush(struct output* out) {
+    if (out->length == 0) {
+        return;
+    }
+
+    out->text[out->length] = '\0';
+    print(out->text);
+    serial_write(out->text);
+    out->length = 0;
 }
 
-/* Send a string to the screen and to the serial console. */
-static void kputs(const char* s) {
-    print(s);
-    serial_write(s);
+/* Collect one character, showing the batch when it is full. */
+static void put(struct output* out, char c) {
+    if (out->length == KPRINTF_BATCH - 1) {
+        flush(out);
+    }
+
+    out->text[out->length] = c;
+    out->length++;
 }
 
-/* Print an unsigned integer in base 10 (no sign, no padding). */
-static void print_uint(unsigned int value) {
+/* Collect a string. */
+static void puts(struct output* out, const char* s) {
+    for (int i = 0; s[i] != '\0'; i++) {
+        put(out, s[i]);
+    }
+}
+
+/* Collect an unsigned integer in base 10 (no sign, no padding). */
+static void print_uint(struct output* out, unsigned int value) {
     char digits[10];  // enough for "4294967295"
     int count = 0;
 
@@ -38,24 +73,24 @@ static void print_uint(unsigned int value) {
 
     while (count > 0) {
         count--;
-        kputc(digits[count]);
+        put(out, digits[count]);
     }
 }
 
-/* Print a signed integer in base 10. */
-static void print_int(int value) {
+/* Collect a signed integer in base 10. */
+static void print_int(struct output* out, int value) {
     unsigned int magnitude = (unsigned int)value;
 
     if (value < 0) {
-        kputc('-');
+        put(out, '-');
         magnitude = -magnitude;  // safe even for INT_MIN: unsigned wraps
     }
 
-    print_uint(magnitude);
+    print_uint(out, magnitude);
 }
 
-/* Print an unsigned integer in lowercase hexadecimal. */
-static void print_hex(unsigned int value) {
+/* Collect an unsigned integer in lowercase hexadecimal. */
+static void print_hex(struct output* out, unsigned int value) {
     const char* hex = "0123456789abcdef";
     char digits[8];  // enough for "ffffffff"
     int count = 0;
@@ -68,18 +103,21 @@ static void print_hex(unsigned int value) {
 
     while (count > 0) {
         count--;
-        kputc(digits[count]);
+        put(out, digits[count]);
     }
 }
 
 /* Print fmt, substituting the varargs at each '%' specifier. */
 void kprintf(const char* fmt, ...) {
+    struct output out;
     va_list args;
+
+    out.length = 0;
     va_start(args, fmt);
 
     for (int i = 0; fmt[i] != '\0'; i++) {
         if (fmt[i] != '%') {
-            kputc(fmt[i]);
+            put(&out, fmt[i]);
             continue;
         }
 
@@ -88,37 +126,39 @@ void kprintf(const char* fmt, ...) {
         switch (fmt[i]) {
             case 's': {
                 const char* s = va_arg(args, const char*);
-                kputs(s != NULL ? s : "(null)");
+                puts(&out, s != NULL ? s : "(null)");
                 break;
             }
             case 'c': {
-                kputc((char)va_arg(args, int));
+                put(&out, (char)va_arg(args, int));
                 break;
             }
             case 'd': {
-                print_int(va_arg(args, int));
+                print_int(&out, va_arg(args, int));
                 break;
             }
             case 'x': {
-                print_hex(va_arg(args, unsigned int));
+                print_hex(&out, va_arg(args, unsigned int));
                 break;
             }
             case '%': {
-                kputc('%');
+                put(&out, '%');
                 break;
             }
             case '\0': {
-                kputc('%');
+                put(&out, '%');
+                flush(&out);
                 va_end(args);
                 return;
             }
             default: {
-                kputc('%');
-                kputc(fmt[i]);
+                put(&out, '%');
+                put(&out, fmt[i]);
                 break;
             }
         }
     }
 
+    flush(&out);
     va_end(args);
 }

@@ -30,6 +30,11 @@
 static int cursor_row = 0;
 static int cursor_col = 0;
 
+/* The cell the hardware cursor was last put on; -1 until it is programmed.
+ * Port writes to the CRT controller are expensive on some virtual machines,
+ * so they are skipped when the cursor is already where it belongs. */
+static int cursor_programmed = -1;
+
 /* How many rows at the top print() must not touch. */
 static int top_row = 0;
 
@@ -43,28 +48,56 @@ static void put_char_at(int row, int col, char c, uint8_t attribute) {
     vga[cell_index(row, col)] = ((uint16_t)attribute << 8) | (uint8_t)c;
 }
 
+/* Move "count" cells from "src" to "dst", two cells at a time: the text
+ * buffer is 16-bit cells, every row starts on a 4-byte boundary, and the
+ * destination is always below the source here, so a forward copy of 32-bit
+ * words is safe. Halves the number of accesses video memory sees. */
+static void move_cells(volatile uint16_t* dst, volatile uint16_t* src,
+                       int count) {
+    volatile uint32_t* wide_dst = (volatile uint32_t*)dst;
+    volatile uint32_t* wide_src = (volatile uint32_t*)src;
+    int pairs = count / 2;
+
+    for (int i = 0; i < pairs; i++) {
+        wide_dst[i] = wide_src[i];
+    }
+
+    if (count % 2 != 0) {
+        dst[count - 1] = src[count - 1];
+    }
+}
+
+/* Write "value" into "count" cells, two at a time. */
+static void fill_cells(volatile uint16_t* dst, int count, uint16_t value) {
+    volatile uint32_t* wide_dst = (volatile uint32_t*)dst;
+    uint32_t pair = ((uint32_t)value << 16) | value;
+    int pairs = count / 2;
+
+    for (int i = 0; i < pairs; i++) {
+        wide_dst[i] = pair;
+    }
+
+    if (count % 2 != 0) {
+        dst[count - 1] = value;
+    }
+}
+
 /* Fill the whole screen with blank cells (one color, no letters). */
 static void clear_cells(void) {
-    for (int row = 0; row < SCREEN_HEIGHT; row++) {
-        for (int col = 0; col < SCREEN_WIDTH; col++) {
-            put_char_at(row, col, ' ', DEFAULT_ATTRIBUTE);
-        }
-    }
+    fill_cells((volatile uint16_t*)VGA_MEMORY, SCREEN_CELLS,
+               ((uint16_t)DEFAULT_ATTRIBUTE << 8) | ' ');
 }
 
 /* Move everything one line up, so the bottom line becomes empty. */
 static void scroll(void) {
     volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;
+    int rows = SCREEN_HEIGHT - top_row - 1;
 
-    for (int row = top_row + 1; row < SCREEN_HEIGHT; row++) {
-        for (int col = 0; col < SCREEN_WIDTH; col++) {
-            vga[cell_index(row - 1, col)] = vga[cell_index(row, col)];
-        }
-    }
+    move_cells(vga + cell_index(top_row, 0), vga + cell_index(top_row + 1, 0),
+               rows * SCREEN_WIDTH);
 
-    for (int col = 0; col < SCREEN_WIDTH; col++) {
-        put_char_at(SCREEN_HEIGHT - 1, col, ' ', DEFAULT_ATTRIBUTE);
-    }
+    fill_cells(vga + cell_index(SCREEN_HEIGHT - 1, 0), SCREEN_WIDTH,
+               ((uint16_t)DEFAULT_ATTRIBUTE << 8) | ' ');
 
     cursor_row = SCREEN_HEIGHT - 1;
 }
@@ -82,6 +115,12 @@ static void new_line(void) {
 /* Tell the VGA hardware where to draw the cursor. */
 static void update_cursor(void) {
     uint16_t position = (uint16_t)cell_index(cursor_row, cursor_col);
+
+    if ((int)position == cursor_programmed) {
+        return;
+    }
+
+    cursor_programmed = (int)position;
 
     outb(CRTC_INDEX_PORT, 14);
     outb(CRTC_DATA_PORT, (uint8_t)(position >> 8));
@@ -217,9 +256,8 @@ void screen_fill_row(int row, char c, uint8_t attribute) {
         return;
     }
 
-    for (int col = 0; col < SCREEN_WIDTH; col++) {
-        put_char_at(row, col, c, attribute);
-    }
+    fill_cells((volatile uint16_t*)VGA_MEMORY + cell_index(row, 0),
+               SCREEN_WIDTH, ((uint16_t)attribute << 8) | (uint8_t)c);
 }
 
 /* Draw a string on one row, clipped at the right edge. */
