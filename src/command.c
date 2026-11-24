@@ -17,6 +17,7 @@
 #include "screen.h"
 #include "shell.h"
 #include "snake.h"
+#include "tetris.h"
 #include "timer.h"
 #include "version.h"
 
@@ -61,6 +62,7 @@ enum command_id {
     CMD_SETDATE,
     CMD_VER,
     CMD_SNAKE,
+    CMD_TETRIS,
     CMD_NOT_FOUND = -1,
 };
 
@@ -68,7 +70,7 @@ static const char* command_names[] = {
     "print", "help",  "shutdown", "reboot",  "clear", "uptime", "sleep",
     "mem",   "tasks", "ls",       "cd",      "pwd",   "cat",    "write",
     "mkdir", "rm",    "mv",       "cp",      "find",  "tree",   "disk",
-    "time",  "cal",   "settime",  "setdate", "ver",   "snake"};
+    "time",  "cal",   "settime",  "setdate", "ver",   "snake",  "tetris"};
 
 static const char* command_help[] = {
     "cal            - show this month's calendar",
@@ -93,6 +95,7 @@ static const char* command_help[] = {
     "sleep <sec>    - pause for a number of seconds",
     "snake          - play the snake game",
     "tasks          - show the running tasks",
+    "tetris         - play the tetris game",
     "time           - show the date and the time",
     "tree [path]    - show a directory as a tree",
     "uptime         - how long AdaOS has been running",
@@ -753,6 +756,9 @@ void command_execute(char* line) {
             break;
         case CMD_SNAKE:
             snake_run();
+            break;
+        case CMD_TETRIS:
+            tetris_run();
             break;
         default: {
             print("Error: command not found.\n");
