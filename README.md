@@ -16,6 +16,7 @@ AdaOS is a tiny command-line operating system for 32-bit x86, written in C and A
 
 ## Features
 
+- **AdaScript**: Run script (.as) files with variables, numeric and array for loops, while loops, conditionals, arrays, and built-in OS commands.
 - **DOS-style shell**: An 80x25 text shell that parses command lines, runs the built-in commands and documents them through `help`.
 - **File system on disk**: A hierarchical tree of files and directories stored on the first IDE disk through the ATA driver, with `ls`, `cd`, `cat`, `mkdir`, `cp`, `mv`, `rm` and `find`. Without a disk the tree lives in RAM for the session.
 - **Full-screen text editor**: `write <file>` opens an editor with a status line and cursor movement.
@@ -61,6 +62,7 @@ AdaOS has been tested with QEMU (`qemu-system-i386`) and VirtualBox 7.2. In Virt
 | `pwd`             | Show the current directory                      |
 | `reboot`          | Restart the machine                             |
 | `rm <path>`       | Remove a file or a directory and its contents   |
+| `run <path>`      | Run an AdaScript file                           |
 | `setdate`         | Set the date                                    |
 | `settime`         | Set the time of day                              |
 | `shutdown`        | Power off the machine                           |

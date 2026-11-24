@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include "adascript.h"
 #include "ata.h"
 #include "clock.h"
 #include "diskfs.h"
@@ -63,14 +64,16 @@ enum command_id {
     CMD_VER,
     CMD_SNAKE,
     CMD_TETRIS,
+    CMD_RUN,
     CMD_NOT_FOUND = -1,
 };
 
 static const char* command_names[] = {
-    "print", "help",  "shutdown", "reboot",  "clear", "uptime", "sleep",
-    "mem",   "tasks", "ls",       "cd",      "pwd",   "cat",    "write",
-    "mkdir", "rm",    "mv",       "cp",      "find",  "tree",   "disk",
-    "time",  "cal",   "settime",  "setdate", "ver",   "snake",  "tetris"};
+    "print",   "help",  "shutdown", "reboot", "clear", "uptime",
+    "sleep",   "mem",   "tasks",    "ls",     "cd",    "pwd",
+    "cat",     "write", "mkdir",    "rm",     "mv",    "cp",
+    "find",    "tree",  "disk",     "time",   "cal",   "settime",
+    "setdate", "ver",   "snake",    "tetris", "run"};
 
 static const char* command_help[] = {
     "cal            - show this month's calendar",
@@ -89,6 +92,7 @@ static const char* command_help[] = {
     "pwd            - show the current directory",
     "reboot         - restart the computer",
     "rm <path>      - remove a file or directory",
+    "run <path>     - run an AdaScript file",
     "setdate        - set the date",
     "settime        - set the time of day",
     "shutdown       - turn off the computer",
@@ -465,9 +469,8 @@ void command_execute(char* line) {
                 break;
             }
 
-            kprintf("Sleeping for %d seconds...\n", (int)seconds);
             scheduler_sleep_ms(seconds * 1000);
-            print("Done.\n");
+
             break;
         }
         case CMD_LS: {
@@ -490,7 +493,7 @@ void command_execute(char* line) {
                 break;
             }
 
-            kprintf("Directory: %s\n", shown);
+            kprintf("%s\n", shown);
 
             if (dir->children == 0) {
                 print("(empty)\n");
@@ -515,7 +518,7 @@ void command_execute(char* line) {
             fs_chdir(count == 2 ? words[1] : "/");
             break;
         case CMD_PWD:
-            kprintf("Directory: %s\n", fs_cwd());
+            kprintf("%s\n", fs_cwd());
             break;
         case CMD_CAT: {
             struct fs_node* node;
@@ -760,7 +763,20 @@ void command_execute(char* line) {
         case CMD_TETRIS:
             tetris_run();
             break;
+        case CMD_RUN: {
+            if (count != 2) {
+                print("Usage: run <path>\n");
+                break;
+            }
+            adascript_run_file(words[1]);
+            break;
+        }
         default: {
+            int len = (int)strlen(words[0]);
+            if (len > 3 && strcmp(words[0] + len - 3, ".as") == 0) {
+                adascript_run_file(words[0]);
+                break;
+            }
             print("Error: command not found.\n");
             break;
         }
