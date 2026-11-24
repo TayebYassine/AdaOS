@@ -23,9 +23,6 @@
 #include "timer.h"
 #include "version.h"
 
-// The shell's command dispatcher: splits the typed line into words,
-// looks the first one up, and runs the matching command.
-
 /* Maximum number of words in one command line. */
 #define MAX_WORDS 32
 /* Number of commands shown on one page of "help". */
@@ -118,10 +115,15 @@ static int find_command(const char* name) {
     return CMD_NOT_FOUND;
 }
 
-/* Split a line into words separated by spaces. A word may be wrapped in
- * double quotes to keep its spaces, as in  write "my file.txt" ; the
- * quotes themselves are dropped. Words are packed back into the line as
- * they are read, so "w" (the write position) never overtakes "i". */
+/* Does this path end in ".as", the only extension "run" accepts? */
+static int has_as_extension(const char* path) {
+    int len = (int)strlen(path);
+
+    return len > 3 && strcmp(path + len - 3, ".as") == 0;
+}
+
+/* Split a line into words. Double quotes keep a word's spaces, as in
+ * write "my file.txt"; words are packed back into the line as they are read. */
 static int split(char* line, char* words[], int max) {
     int count = 0;
     int i = 0;
@@ -164,8 +166,7 @@ static int split(char* line, char* words[], int max) {
     return count;
 }
 
-/* Print one number in base 10, padded with leading zeros up to "width" digits.
- */
+/* Print a number in base 10, padded with leading zeros to "width" digits. */
 static void print_padded(unsigned int value, int width) {
     char digits[10];  // enough for 4,294,967,295
     int count = 0;
@@ -186,9 +187,8 @@ static void print_padded(unsigned int value, int width) {
     }
 }
 
-/* Read a decimal number at the start of a word; returns the digit count (0 = no
- * number). Parsing stops after 10 digits, and stops early if the value would
- * not fit in a uint32_t. */
+/* Read a decimal number at the start of a word; returns the digit count (0 =
+ * none), stopping at 10 digits or when the value would not fit uint32_t. */
 static int parse_uint(const char* word, uint32_t* value) {
     uint32_t result = 0;
     int digits = 0;
@@ -255,8 +255,7 @@ static int find_walk(struct fs_node* node, const char* pattern) {
     return found;
 }
 
-/* Room for the branches above the deepest entry the shell will draw:
- * four characters per level, deep enough for any path that fits. */
+/* Room for the branches above the deepest entry: four characters per level. */
 #define TREE_PREFIX_MAX 256
 
 // The branch pieces, as the CP437 glyphs the VGA text font draws: the
@@ -295,8 +294,8 @@ static void tree_walk(struct fs_node* dir, char* prefix, int len) {
 
         tree_walk(node, prefix, next);
 
-        /* Drop the branch the children added, so the next sibling is
-         * drawn at this level and not one level deeper. */
+        // Drop the branch the children added, so the next sibling is drawn
+        // at this level and not one level deeper.
         prefix[len] = '\0';
     }
 }
@@ -742,12 +741,15 @@ void command_execute(char* line) {
                 print("Usage: run <path>\n");
                 break;
             }
+            if (!has_as_extension(words[1])) {
+                print("Error: The file is not AdaScript (.as) file.\n");
+                break;
+            }
             adascript_run_file(words[1]);
             break;
         }
         default: {
-            int len = (int)strlen(words[0]);
-            if (len > 3 && strcmp(words[0] + len - 3, ".as") == 0) {
+            if (has_as_extension(words[0])) {
                 adascript_run_file(words[0]);
                 break;
             }

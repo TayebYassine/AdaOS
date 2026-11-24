@@ -3,8 +3,14 @@
 
 #include <stdint.h>
 
+// ATA disk access over the primary IDE bus, PIO mode, polling. A disk is a
+// stack of 512-byte sectors addressed by LBA; a command names the first sector
+// and a count, and the CPU then moves 16-bit words through the data port. Only
+// one disk is looked for, and every wait is bounded so a missing or wedged
+// drive fails instead of hanging.
+
 /* The unit an ATA disk reads and writes in. */
-#define ATA_SECTOR_SIZE 512
+#define ATA_SECTOR_SIZE 512  // bytes in one LBA sector
 
 /* Find the first disk on the primary bus; 1 if one answered. */
 int ata_init(void);

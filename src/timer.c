@@ -7,34 +7,27 @@
 #include "io.h"
 #include "scheduler.h"
 
-// The Programmable Interval Timer (PIT) counts down from a value we
-// program and raises IRQ0 every time it reaches zero - one "tick".
-// We ask for 100 ticks per second, and that tick is the kernel's
-// clock: uptime counts them, sleep() waits for enough of them, the wall
-// clock moves on once every hundred, and the scheduler gets a chance to
-// switch tasks on every one.
-
-/* Hz the PIT crystal runs at */
+/* Hz the PIT crystal runs at. */
 #define PIT_INPUT_FREQUENCY 1193182
-/* ticks per second we ask for */
+/* Ticks per second we ask for. */
 #define TIMER_FREQUENCY 100
 
-/* where we tell the PIT what to do */
+/* Command port: channel, access mode and operating mode. */
 #define PIT_COMMAND_PORT 0x43
-/* where we send it the countdown */
+/* Channel 0 data port: receives the countdown. */
 #define PIT_CHANNEL0_DATA_PORT 0x40
 
-/* Command byte: channel 0, low byte first, square wave, binary counting. */
-#define PIT_COMMAND_CHANNEL0 0x00
-#define PIT_COMMAND_LOHIBYTE 0x30
-#define PIT_COMMAND_MODE_SQUARE_WAVE 0x06
-#define PIT_COMMAND_BINARY 0x00
+// Command byte fields, OR-ed together: channel 0, low byte then high byte,
+// square wave generator, binary counting.
+#define PIT_COMMAND_CHANNEL0 0x00          // channel 0
+#define PIT_COMMAND_LOHIBYTE 0x30          // write low byte, then high byte
+#define PIT_COMMAND_MODE_SQUARE_WAVE 0x06  // mode 3: square wave
+#define PIT_COMMAND_BINARY 0x00            // count in binary, not BCD
 
 /* Only IRQ0 writes this, so it is volatile: the compiler must not cache it. */
 static volatile uint32_t tick_count = 0;
 
-/* IRQ0: count one tick and let the scheduler look at the tasks; runs
- * in interrupt context, so keep it minimal. */
+/* IRQ0: count one tick and let the scheduler look at the tasks. */
 static void timer_irq(struct interrupt_frame* frame) {
     tick_count++;
 
@@ -68,13 +61,14 @@ uint32_t timer_ticks(void) { return tick_count; }
 /* Whole seconds of uptime since the kernel started. */
 uint32_t timer_seconds(void) { return tick_count / TIMER_FREQUENCY; }
 
-/* Wait for the given number of milliseconds to pass. */
+/* Idle the CPU until the given number of milliseconds has passed. */
 void timer_sleep(uint32_t milliseconds) {
     uint32_t ticks = (milliseconds / 1000) * TIMER_FREQUENCY +
                      ((milliseconds % 1000) * TIMER_FREQUENCY + 999) / 1000;
 
     uint32_t target = tick_count + ticks;
 
+    // Unsigned subtraction read as signed still works when the counter wraps.
     while ((int32_t)(tick_count - target) < 0) {
         interrupt_wait();
     }

@@ -3,11 +3,11 @@
 
 #include <stdint.h>
 
-// The Multiboot 1 structures: what GRUB hands the kernel in ebx at the
-// moment it jumps to _start. Only the parts AdaOS uses are meaningful,
-// but the whole multiboot_info layout is spelled out because every
-// field after "flags" sits at a fixed offset - leaving one out would
-// silently shift the rest.
+// The Multiboot 1 hand-off structures: what the bootloader passes in ebx when
+// it jumps to the kernel entry point. Only some fields are used, but the whole
+// layout is spelled out because every field after "flags" sits at a fixed
+// offset - leaving one out would silently shift the rest. The memory map
+// arrives as a chain of entries, each tagged available or reserved.
 //
 // Reference: https://www.gnu.org/software/grub/manual/multiboot/
 
@@ -22,39 +22,33 @@
 #define MULTIBOOT_INFO_MEM_MAP 0x00000040
 
 // multiboot_mmap_entry.type values
-#define MULTIBOOT_MEMORY_AVAILABLE 1
-#define MULTIBOOT_MEMORY_RESERVED 2
+#define MULTIBOOT_MEMORY_AVAILABLE 1  // RAM free for the kernel to use
+#define MULTIBOOT_MEMORY_RESERVED 2   // ROM, firmware or device memory
 
-/* The first megabyte is never usable: BIOS data, the VGA window, option
- * ROMs. The map usually says so too. */
+/* The first megabyte is never usable: BIOS data, the VGA window, option ROMs.
+ */
 #define MULTIBOOT_LOW_MEMORY_END 0x00100000
 
-/* One module the loader put in memory; for AdaOS, the initrd. */
+/* One module the loader put in memory; in this kernel, the initial ramdisk. */
 struct multiboot_module {
-    /* first byte, one past the last */
-    uint32_t mod_start;
-    uint32_t mod_end;
-    /* a string the loader attached, not used here */
-    uint32_t string;
+    uint32_t mod_start;  // first byte
+    uint32_t mod_end;    // one past the last
+    uint32_t string;     // a string the loader attached, not used here
     uint32_t reserved;
 } __attribute__((packed));
 
 /* The information structure itself. */
 struct multiboot_info {
     uint32_t flags;
-    /* KB of low memory (below 1 MiB) */
-    uint32_t mem_lower;
-    /* KB of memory above 1 MiB */
-    uint32_t mem_upper;
+    uint32_t mem_lower;  // KB of low memory (below 1 MiB)
+    uint32_t mem_upper;  // KB of memory above 1 MiB
     uint32_t boot_device;
     uint32_t cmdline;
     uint32_t mods_count;
     uint32_t mods_addr;
     uint32_t syms[4];
-    /* bytes of memory map that follow */
-    uint32_t mmap_length;
-    /* physical address */
-    uint32_t mmap_addr;
+    uint32_t mmap_length;  // bytes of memory map that follow
+    uint32_t mmap_addr;    // physical address
     uint32_t drives_length;
     uint32_t drives_addr;
     uint32_t config_table;
@@ -68,16 +62,10 @@ struct multiboot_info {
     uint32_t vbe_interface_len;
 } __attribute__((packed));
 
-/* One entry of the memory map, tagged with what the region is for.
- *
- * The spec says addr and len are 64-bit, but they are kept here as two
- * 32-bit halves: that is the same bytes in memory (the machine is
- * little-endian), and it keeps the kernel free of 64-bit arithmetic,
- * which would otherwise make the linker pull in helper routines from
- * libgcc that a freestanding kernel does not link. */
+/* One memory map entry. addr and len are 64-bit in the spec, kept here as two
+ * 32-bit halves: same bytes little-endian, and no 64-bit arithmetic to link. */
 struct multiboot_mmap_entry {
-    /* size of this entry, not counting this field (20) */
-    uint32_t size;
+    uint32_t size;  // size of this entry, not counting this field (20)
     uint32_t addr_low;
     uint32_t addr_high;
     uint32_t len_low;

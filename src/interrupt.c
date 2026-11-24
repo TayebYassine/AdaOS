@@ -7,12 +7,7 @@
 #include "scheduler.h"
 #include "screen.h"
 
-// The C half of the interrupt machinery. isr.asm saves the registers
-// and calls interrupt_handler() with a pointer to them; everything
-// else lives here: the table of IRQ handlers, the report we print when
-// the CPU faults, and the idle loop.
-
-/* Where pic.c maps IRQ0. */
+/* Where the PIC maps IRQ0. */
 #define IRQ_BASE 0x20
 /* IRQ0-IRQ15. */
 #define IRQ_COUNT 16
@@ -23,38 +18,38 @@ static volatile int in_interrupt = 0;
 
 /* What each of the CPU's own exceptions (0x00-0x1F) is called. */
 static const char* exception_names[32] = {
-    "Divide Error",                /* 0x00 */
-    "Debug",                       /* 0x01 */
-    "Non-Maskable Interrupt",      /* 0x02 */
-    "Breakpoint",                  /* 0x03 */
-    "Overflow",                    /* 0x04 */
-    "Bound Range Exceeded",        /* 0x05 */
-    "Invalid Opcode",              /* 0x06 */
-    "Device Not Available",        /* 0x07 */
-    "Double Fault",                /* 0x08 */
-    "Coprocessor Segment Overrun", /* 0x09 */
-    "Invalid TSS",                 /* 0x0A */
-    "Segment Not Present",         /* 0x0B */
-    "Stack-Segment Fault",         /* 0x0C */
-    "General Protection Fault",    /* 0x0D */
-    "Page Fault",                  /* 0x0E */
-    "Reserved",                    /* 0x0F */
-    "x87 Floating-Point",          /* 0x10 */
-    "Alignment Check",             /* 0x11 */
-    "Machine Check",               /* 0x12 */
-    "SIMD Floating-Point",         /* 0x13 */
-    "Virtualization",              /* 0x14 */
-    "Control Protection",          /* 0x15 */
-    "Reserved",                    /* 0x16 */
-    "Reserved",                    /* 0x17 */
-    "Reserved",                    /* 0x18 */
-    "Reserved",                    /* 0x19 */
-    "Reserved",                    /* 0x1A */
-    "Reserved",                    /* 0x1B */
-    "Reserved",                    /* 0x1C */
-    "Reserved",                    /* 0x1D */
-    "Security Exception",          /* 0x1E */
-    "Reserved",                    /* 0x1F */
+    "Divide Error",                 // 0x00
+    "Debug",                        // 0x01
+    "Non-Maskable Interrupt",       // 0x02
+    "Breakpoint",                   // 0x03
+    "Overflow",                     // 0x04
+    "Bound Range Exceeded",         // 0x05
+    "Invalid Opcode",               // 0x06
+    "Device Not Available",         // 0x07
+    "Double Fault",                 // 0x08
+    "Coprocessor Segment Overrun",  // 0x09
+    "Invalid TSS",                  // 0x0A
+    "Segment Not Present",          // 0x0B
+    "Stack-Segment Fault",          // 0x0C
+    "General Protection Fault",     // 0x0D
+    "Page Fault",                   // 0x0E
+    "Reserved",                     // 0x0F
+    "x87 Floating-Point",           // 0x10
+    "Alignment Check",              // 0x11
+    "Machine Check",                // 0x12
+    "SIMD Floating-Point",          // 0x13
+    "Virtualization",               // 0x14
+    "Control Protection",           // 0x15
+    "Reserved",                     // 0x16
+    "Reserved",                     // 0x17
+    "Reserved",                     // 0x18
+    "Reserved",                     // 0x19
+    "Reserved",                     // 0x1A
+    "Reserved",                     // 0x1B
+    "Reserved",                     // 0x1C
+    "Reserved",                     // 0x1D
+    "Security Exception",           // 0x1E
+    "Reserved",                     // 0x1F
 };
 
 /* Read CR2: the address of the fault that raised vector 14. */
@@ -64,8 +59,7 @@ static uint32_t read_cr2(void) {
     return value;
 }
 
-/* Report the exception and either retire the task that raised it or,
- * when there is nobody to blame, halt. */
+/* Report the exception, then retire the task that raised it or halt. */
 static void handle_exception(struct interrupt_frame* frame) {
     kprintf("\nAdaOS: exception %d (%s)\n", (int)frame->int_number,
             exception_names[frame->int_number]);
@@ -75,6 +69,8 @@ static void handle_exception(struct interrupt_frame* frame) {
         kprintf("  faulting address 0x%x\n", read_cr2());
     }
 
+    // A fault inside an interrupt handler cannot be blamed on a task, so
+    // there is nothing to retire and the machine stops.
     if (!in_interrupt && scheduler_kill_current(frame)) {
         return;
     }
@@ -86,7 +82,7 @@ static void handle_exception(struct interrupt_frame* frame) {
     }
 }
 
-/* Route one interrupt: exceptions halt, IRQs go to their registered handler. */
+/* Route one interrupt: exceptions halt, IRQs go to their handler. */
 void interrupt_handler(struct interrupt_frame* frame) {
     if (frame->int_number < IRQ_BASE) {
         handle_exception(frame);

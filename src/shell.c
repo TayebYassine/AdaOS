@@ -6,13 +6,10 @@
 #include "libc.h"
 #include "screen.h"
 
-// The interactive shell: prints the prompt, reads a line from the
-// keyboard (with cursor editing and Up/Down command history), and
-// hands each finished line to command_execute().
-
-/* Number of past lines to remember */
+/* Number of past lines to remember. */
 #define HISTORY_SIZE 8
 
+// History is a ring: history_start is the oldest of history_count entries.
 static char history[HISTORY_SIZE][SHELL_LINE_MAX];
 static int history_count = 0;
 static int history_start = 0;
@@ -22,7 +19,7 @@ static char* history_at(int i) {
     return history[(history_start + i) % HISTORY_SIZE];
 }
 
-/* Remember a line the user typed. */
+/* Remember a line the user typed, skipping an immediate repeat. */
 static void history_push(const char* line) {
     if (history_count > 0 && strcmp(line, history_at(history_count - 1)) == 0) {
         return;
@@ -37,9 +34,7 @@ static void history_push(const char* line) {
     memcpy(history_at(history_count - 1), line, strlen(line) + 1);
 }
 
-/* Read one line: characters echo as typed, Left/Right move the cursor,
- * Up/Down walk the history, Enter finishes the line. The commands that ask
- * a question of their own (settime, setdate) use this too. */
+/* Read one line with cursor editing and history; Enter finishes it. */
 void shell_read_line(char* line) {
     int length = 0;
     int cursor = 0;
@@ -95,6 +90,7 @@ void shell_read_line(char* line) {
         // Up/Down: swap the line for one from the history (Up = older).
         if (key == KEY_UP || key == KEY_DOWN) {
             if (key == KEY_UP && view > 0) {
+                // Keep the line being edited before stepping into history.
                 if (view == history_count) {
                     memcpy(fresh, line, (size_t)length);
                     fresh_length = length;
@@ -138,7 +134,6 @@ void shell_read_line(char* line) {
         }
 
         // Normal key: insert it at the cursor and show it right away.
-        // Control codes are not part of a command line.
         if (key >= ' ' && key < KEY_UP) {
             if (length < SHELL_LINE_MAX - 1) {
                 // Shift the rest of the line one position right.

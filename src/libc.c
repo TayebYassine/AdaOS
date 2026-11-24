@@ -1,9 +1,5 @@
 #include "libc.h"
 
-// The tiny C library of AdaOS: the handful of string and memory
-// routines the kernel needs. The kernel is built with -fno-builtin
-// and provides these itself, because there is no libc behind it.
-
 /* Length of a string, not counting the ending '\0'. */
 size_t strlen(const char* s) {
     size_t length = 0;

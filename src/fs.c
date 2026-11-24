@@ -9,18 +9,6 @@
 #include "screen.h"
 #include "spinlock.h"
 
-// The RAM file system: a tree of nodes in the kernel heap, rooted at "/".
-// Files live as long as the machine does - nothing reaches a disk - but
-// the shell sees an ordinary directory tree, and a disk-backed version
-// can later be dropped in behind these same calls.
-//
-// The tree is shared state: the shell walks and changes it, and a
-// future task or an IRQ handler could too. So every call that touches it
-// holds tree_lock, which also keeps interrupts out - an interrupt
-// handler that wanted the tree could never wait for the task it
-// interrupted. Calls that need several nodes hold the lock once and use
-// the unlocked helpers below.
-
 static char cwd[FS_PATH_MAX] = "/";
 
 static struct fs_node* root = 0;
@@ -270,6 +258,7 @@ static int within(struct fs_node* node, struct fs_node* ancestor) {
     return 0;
 }
 
+/* Build the empty tree with just "/" in it. */
 void fs_init(void) {
     spinlock_acquire(&tree_lock);
 
@@ -280,6 +269,7 @@ void fs_init(void) {
     spinlock_release(&tree_lock);
 }
 
+/* Throw the tree away, leaving just "/", and go back to the root. */
 void fs_reset(void) {
     struct fs_node* child;
 
@@ -305,6 +295,7 @@ void fs_reset(void) {
     spinlock_release(&tree_lock);
 }
 
+/* Did anything change since the tree was last saved to the disk? */
 int fs_dirty(void) {
     int value;
 
@@ -315,17 +306,17 @@ int fs_dirty(void) {
     return value;
 }
 
+/* Record that the tree in memory matches the disk again. */
 void fs_mark_clean(void) {
     spinlock_acquire(&tree_lock);
     dirty = 0;
     spinlock_release(&tree_lock);
 }
 
-/* The tree's root. The pointer outlives the lock, so this is only safe
- * while nothing else changes the tree; the disk writer in diskfs.c,
- * which walks it from the shell, relies on that. */
+/* The tree's root; it must be used before the tree changes again. */
 struct fs_node* fs_root(void) { return root; }
 
+/* The absolute path of a node; 0 if it does not fit. */
 int fs_node_path(struct fs_node* node, char* out) {
     int ok;
 
@@ -354,6 +345,7 @@ static struct fs_node* resolve_tree(const char* path) {
     return node;
 }
 
+/* The node a path names, or 0; the error is printed here. */
 struct fs_node* fs_resolve(const char* path) {
     struct fs_node* node;
 
@@ -364,6 +356,7 @@ struct fs_node* fs_resolve(const char* path) {
     return node;
 }
 
+/* The node a path names, or 0; silent about why it failed. */
 struct fs_node* fs_lookup(const char* path) {
     char abs[FS_PATH_MAX];
     struct fs_node* node;
@@ -382,6 +375,7 @@ struct fs_node* fs_lookup(const char* path) {
     return node;
 }
 
+/* Would fs_write() accept this path? */
 int fs_can_write(const char* path) {
     char abs[FS_PATH_MAX];
     char name[FS_NAME_MAX];
@@ -465,6 +459,7 @@ static struct fs_node* mkdir_tree(const char* path) {
     return node;
 }
 
+/* Make a directory; an existing one is returned unchanged. */
 struct fs_node* fs_mkdir(const char* path) {
     struct fs_node* node;
 
@@ -549,6 +544,7 @@ static struct fs_node* write_tree(const char* path, const char* data,
     return node;
 }
 
+/* Create a file, or replace the contents of an existing one. */
 struct fs_node* fs_write(const char* path, const char* data, uint32_t len) {
     struct fs_node* node;
 
@@ -559,6 +555,7 @@ struct fs_node* fs_write(const char* path, const char* data, uint32_t len) {
     return node;
 }
 
+/* Remove a file, or a directory and everything under it. */
 int fs_remove(const char* path) {
     char abs[FS_PATH_MAX];
     struct fs_node* node;
@@ -701,6 +698,7 @@ static int move_tree(const char* from, const char* to) {
     return 1;
 }
 
+/* Move or rename a file or directory; 1 on success. */
 int fs_move(const char* from, const char* to) {
     int ok;
 
@@ -819,6 +817,7 @@ static int copy_tree(const char* from, const char* to) {
     return 1;
 }
 
+/* Copy a file or directory, with everything under it; 1 on success. */
 int fs_copy(const char* from, const char* to) {
     int ok;
 
@@ -829,10 +828,10 @@ int fs_copy(const char* from, const char* to) {
     return ok;
 }
 
-/* The current directory. The pointer outlives the lock, so the caller
- * must use it before anything else can change it - the shell does. */
+/* The current directory, valid until something changes it. */
 const char* fs_cwd(void) { return cwd; }
 
+/* Move the current directory; 1 on success. */
 int fs_chdir(const char* path) {
     struct fs_node* node;
     int ok = 0;
@@ -856,9 +855,11 @@ int fs_chdir(const char* path) {
     return ok;
 }
 
-#define TAR_BLOCK 512
-#define TAR_CHECKSUM_OFFSET 148
+#define TAR_BLOCK 512            // bytes per archive block
+#define TAR_CHECKSUM_OFFSET 148  // where the header's checksum sits
 
+// The 512-byte tar header; every field is fixed width and text, sizes and
+// times in octal. Only name, prefix, size and typeflag are used here.
 struct tar_header {
     char name[100];
     char mode[8];
@@ -867,7 +868,7 @@ struct tar_header {
     char size[12];
     char mtime[12];
     char checksum[8];
-    char typeflag;
+    char typeflag;  // '0' or '\0' file, '5' directory
     char linkname[100];
     char magic[6];
     char version[2];
@@ -982,6 +983,7 @@ static int entry_path(const struct tar_header* header, char* out) {
     return 1;
 }
 
+/* Is this block all zeroes, i.e. the end of the archive? */
 static int tar_is_empty(const unsigned char* block) {
     for (uint32_t i = 0; i < TAR_BLOCK; i++) {
         if (block[i] != 0) {
@@ -1041,6 +1043,7 @@ static int load_tar(uint32_t start, uint32_t end) {
     return files;
 }
 
+/* Unpack the boot modules into the tree; returns files added. */
 int fs_load_module(uint32_t magic, uint32_t info_addr) {
     struct multiboot_info* info;
     struct multiboot_module* mods;

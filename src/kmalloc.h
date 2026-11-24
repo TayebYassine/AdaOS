@@ -4,14 +4,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// The kernel heap: kmalloc() and kfree() over a region of virtual memory that
+// grows a page at a time, each page backed by whatever physical frame is free.
+// Inside it the allocator keeps a first-fit free list, splits blocks when a
+// useful remainder would be left, and merges neighbours on free. A lock guards
+// the list because interrupt handlers allocate too.
+
 /* How the heap is doing, for display. */
 struct heap_stats {
-    /* virtual space handed to the heap so far */
-    uint32_t mapped_bytes;
-    /* inside live blocks */
-    uint32_t used_bytes;
-    /* inside free blocks */
-    uint32_t free_bytes;
+    uint32_t mapped_bytes;  // virtual space handed to the heap so far
+    uint32_t used_bytes;    // inside live blocks
+    uint32_t free_bytes;    // inside free blocks
     uint32_t block_count;
 };
 

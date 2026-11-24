@@ -9,38 +9,50 @@
 #include "libc.h"
 #include "screen.h"
 
-// The full-screen text editor behind "write".
-//
-// The shell's screen is copied out before anything is drawn and put back
-// when the editor closes, so "write" leaves the shell exactly as it found
-// it. While it runs the screen is repainted from three parts:
-//
-//   row 0         title bar: "Editing <name> - <bytes> bytes" (the shell's
-//                 clock bar is paused meanwhile: this row is ours)
-//   rows 1-23     the text itself
-//   row 24        status bar: ^S and ^E on the left, the paging markers
-//                 "<" and ">" on the right
-//
-// The text is kept as an array of fixed-width lines, one screen row each.
-// A line may be wider than the screen, so the view has a horizontal
-// offset (first_col) beside the vertical one (first_line): moving the
-// cursor past either edge scrolls the view by one line or column, exactly
-// like a terminal. The status bar says whether anything is hidden off
-// screen: "<" when the view starts inside a line, ">" when a line runs
-// past the right edge.
-
-#define TEXT_TOP 1
-#define TEXT_ROWS (SCREEN_ROWS - 2)
+#define TEXT_TOP 1                   // first row of the text
+#define TEXT_ROWS (SCREEN_ROWS - 2)  // text rows, title and status excluded
 #define TEXT_COLS SCREEN_COLS
 
-#define MAX_LINES 200
-#define LINE_MAX 255
+#define MAX_LINES 200  // lines the buffer can hold
+#define LINE_MAX 255   // characters one line can hold
 #define LINE_SIZE (LINE_MAX + 1)
 
-#define COLOR_TEXT 0x0F
-#define COLOR_BAR 0x70
+#define COLOR_TEXT 0x0F     // everything else: operators and plain text
+#define COLOR_BAR 0x70      // status and title bars: black on white
+#define COLOR_KEYWORD 0x09  // light blue: structural AdaScript words
+#define COLOR_COMMAND 0x05  // magenta: command names
+#define COLOR_NUMBER 0x06   // orange: numbers outside strings
+#define COLOR_STRING 0x02   // green: the text between double quotes
+#define COLOR_TYPE 0x04     // red: data type names
+#define COLOR_COMMENT 0x07  // light gray: from a "#" to the end of the line
 
-static char* lines = 0;
+/* Words AdaScript runs its own syntax with; none of them is a shell command. */
+static const char* const highlight_keywords[] = {
+    "and",   "break",  "continue", "do",       "done",   "elif",
+    "else",  "endfor", "endif",    "endwhile", "endl",   "exit",
+    "false", "fi",     "for",      "from",     "if",     "in",
+    "len",   "not",    "null",     "or",       "return", "step",
+    "then",  "to",     "true",     "typeof",   "while",  "range"};
+
+/* Shell built-ins, plus the three AdaScript statements that look like them. */
+static const char* const highlight_commands[] = {
+    "cal",     "cat",      "cd",    "clear",  "cp",    "define", "delete",
+    "disk",    "find",     "help",  "input",  "ls",    "mem",    "mkdir",
+    "mv",      "print",    "pwd",   "reboot", "rm",    "run",    "setdate",
+    "settime", "shutdown", "sleep", "snake",  "tasks", "tetris", "time",
+    "tree",    "uptime",   "ver",   "write",
+};
+
+/* The names the AdaScript parser accepts after a "define" or a ":". */
+static const char* const highlight_types[] = {
+    "bool",   "int",  "int8",  "int16",  "int32",
+    "string", "uint", "uint8", "uint16", "uint32",
+};
+
+static char* lines = 0;  // MAX_LINES * LINE_SIZE bytes from the heap
+
+static int highlighting = 0;       // only .as files are coloured
+static uint8_t colors[LINE_SIZE];  // colour of each character of a line
 
 static char path[FS_PATH_MAX];
 static char title[FS_NAME_MAX];
@@ -48,19 +60,164 @@ static char title[FS_NAME_MAX];
 static uint32_t line_count = 1;
 static uint32_t cursor_line = 0;
 static uint32_t cursor_col = 0;
-static uint32_t first_line = 0;
-static uint32_t first_col = 0;
+static uint32_t first_line = 0;  // top line of the view
+static uint32_t first_col = 0;   // leftmost column of the view
 
-static char note[24] = "";
+static char note[24] = "";  // short message for the status bar
 
 static uint16_t saved_cells[SCREEN_CELLS];
 static int saved_row = 0;
 static int saved_col = 0;
 
+/* The buffer of one line. */
 static char* line_at(uint32_t index) { return lines + index * LINE_SIZE; }
 
+/* Characters in one line. */
 static uint32_t line_length(uint32_t index) {
     return (uint32_t)strlen(line_at(index));
+}
+
+/* Is name the whole word word[0..length)? */
+static int word_matches(const char* word, uint32_t length, const char* name) {
+    uint32_t i = 0;
+
+    for (; i < length; i++) {
+        if (name[i] == '\0' || word[i] != name[i]) {
+            return 0;
+        }
+    }
+
+    return name[i] == '\0';
+}
+
+/* Is this word one of the names in list? */
+static int word_in_list(const char* word, uint32_t length,
+                        const char* const* list, uint32_t count) {
+    for (uint32_t i = 0; i < count; i++) {
+        if (word_matches(word, length, list[i])) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/* Colour for one whole word: keyword, command, type, or plain text. */
+static uint8_t word_color(const char* word, uint32_t length) {
+    if (word_in_list(word, length, highlight_keywords,
+                     (uint32_t)(sizeof(highlight_keywords) /
+                                sizeof(highlight_keywords[0])))) {
+        return COLOR_KEYWORD;
+    }
+
+    if (word_in_list(word, length, highlight_commands,
+                     (uint32_t)(sizeof(highlight_commands) /
+                                sizeof(highlight_commands[0])))) {
+        return COLOR_COMMAND;
+    }
+
+    if (word_in_list(
+            word, length, highlight_types,
+            (uint32_t)(sizeof(highlight_types) / sizeof(highlight_types[0])))) {
+        return COLOR_TYPE;
+    }
+
+    return COLOR_TEXT;
+}
+
+/* Characters a word is built from: letters, digits and the underscore. */
+static int ident_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+/* Fill colors[] with the colour of each character of a line. A double-quoted
+ * string is green from its opening quote to its closing one, so anything that
+ * looks like a number or a keyword inside it stays green. Outside a string a
+ * run of digits (including 0x...) is a number, and an unquoted number that
+ * follows a letter, as in x1, is part of that name instead. */
+static void classify_line(const char* line) {
+    uint32_t length = (uint32_t)strlen(line);
+    uint32_t i = 0;
+
+    while (i < length) {
+        char c = line[i];
+
+        // String literal: the quotes and everything between them.
+        if (c == '"') {
+            colors[i] = COLOR_STRING;
+            i++;
+
+            while (i < length) {
+                char inner = line[i];
+                colors[i] = COLOR_STRING;
+                i++;
+
+                if (inner == '"') {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        // Comment: from the "#" to the end of the line.
+        if (c == '#') {
+            while (i < length) {
+                colors[i] = COLOR_COMMENT;
+                i++;
+            }
+            continue;
+        }
+
+        // Integer literal: decimal, or hex after an 0x prefix.
+        if (c >= '0' && c <= '9' && !(i > 0 && ident_char(line[i - 1]))) {
+            int hex = 0;
+
+            if (c == '0' && i + 1 < length &&
+                (line[i + 1] == 'x' || line[i + 1] == 'X')) {
+                hex = 1;
+                colors[i] = COLOR_NUMBER;
+                colors[i + 1] = COLOR_NUMBER;
+                i += 2;
+            }
+
+            while (i < length) {
+                char digit = line[i];
+
+                if (digit >= '0' && digit <= '9') {
+                    colors[i] = COLOR_NUMBER;
+                    i++;
+                } else if (hex && ((digit >= 'a' && digit <= 'f') ||
+                                   (digit >= 'A' && digit <= 'F'))) {
+                    colors[i] = COLOR_NUMBER;
+                    i++;
+                } else {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        // A name: one lookup decides the colour of all of it.
+        if (ident_char(c) && !(c >= '0' && c <= '9')) {
+            uint32_t start = i;
+            uint8_t color;
+
+            while (i < length && ident_char(line[i])) {
+                i++;
+            }
+
+            color = word_color(line + start, i - start);
+
+            for (uint32_t k = start; k < i; k++) {
+                colors[k] = color;
+            }
+            continue;
+        }
+
+        colors[i] = COLOR_TEXT;
+        i++;
+    }
 }
 
 /* Bytes the file would hold, line breaks included. */
@@ -157,7 +314,16 @@ static void draw_title(void) {
     screen_puts_at(0, 0, text, COLOR_BAR);
 }
 
-/* Draw the visible lines from first_col on, blank where the file ends. */
+/* Does this path end in ".as", the AdaScript extension? */
+static int is_adascript(const char* file) {
+    uint32_t length = (uint32_t)strlen(file);
+
+    return length > 3 && file[length - 3] == '.' && file[length - 2] == 'a' &&
+           file[length - 1] == 's';
+}
+
+/* Draw the visible lines from first_col on, blank where the file ends. Only an
+ * .as file is coloured; any other file stays white. */
 static void draw_text(void) {
     for (int row = 0; row < TEXT_ROWS; row++) {
         uint32_t index = first_line + (uint32_t)row;
@@ -169,6 +335,8 @@ static void draw_text(void) {
             const char* line = line_at(index);
             uint32_t length = line_length(index);
 
+            classify_line(line);
+
             for (int col = 0; col < TEXT_COLS; col++) {
                 uint32_t source = first_col + (uint32_t)col;
 
@@ -176,7 +344,8 @@ static void draw_text(void) {
                     break;
                 }
 
-                screen_put_at(screen_row, col, line[source], COLOR_TEXT);
+                screen_put_at(screen_row, col, line[source],
+                              highlighting ? colors[source] : COLOR_TEXT);
             }
         }
     }
@@ -403,7 +572,7 @@ static void delete_char(void) {
     cursor_col = previous_length;
 }
 
-/* Up/Down move a line; Left/Right cross line ends like a normal editor. */
+/* One line up, keeping the column inside the shorter line. */
 static void move_up(void) {
     if (cursor_line == 0) {
         return;
@@ -413,6 +582,7 @@ static void move_up(void) {
     clamp_column();
 }
 
+/* One line down, keeping the column inside the shorter line. */
 static void move_down(void) {
     if (cursor_line + 1 >= line_count) {
         return;
@@ -422,6 +592,7 @@ static void move_down(void) {
     clamp_column();
 }
 
+/* One cell left, wrapping to the end of the line above. */
 static void move_left(void) {
     if (cursor_col > 0) {
         cursor_col--;
@@ -434,6 +605,7 @@ static void move_left(void) {
     }
 }
 
+/* One cell right, wrapping to the start of the line below. */
 static void move_right(void) {
     if (cursor_col < line_length(cursor_line)) {
         cursor_col++;
@@ -475,6 +647,7 @@ void editor_open(const char* file) {
 
     memcpy(path, file, length + 1);
     set_title(file);
+    highlighting = is_adascript(file);
     note[0] = '\0';
 
     cursor_line = 0;

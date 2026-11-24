@@ -37,18 +37,17 @@ enum as_type {
 /* Value container supporting primitives, strings, and arrays. */
 struct as_value {
     enum as_type type;
-    /* Base type when type is AS_TYPE_ARRAY */
-    enum as_type elem_type;
-    int is_null;
+    enum as_type elem_type;  // Base type when type is AS_TYPE_ARRAY
+    int is_null;             // 1 when the value is null
     union {
-        int32_t i32;
-        uint32_t u32;
-        char* str;
-        int boolean;
+        int32_t i32;   // signed types
+        uint32_t u32;  // unsigned types
+        char* str;     // AS_TYPE_STRING, heap owned
+        int boolean;   // AS_TYPE_BOOL
         struct {
-            struct as_value* items;
-            int count;
-            int capacity;
+            struct as_value* items;  // heap array of values
+            int count;               // items in use
+            int capacity;            // items allocated
         } arr;
     } u;
 };
@@ -57,32 +56,30 @@ struct as_value {
 struct as_var {
     char name[AS_NAME_MAX];
     struct as_value val;
-    struct as_var* next;
+    struct as_var* next;  // next variable in the environment
 };
 
 /* Execution environment and symbol table. */
 struct as_env {
-    struct as_var* vars;
+    struct as_var* vars;  // symbol table, newest first
     int error;
     int exit_flag;
     int break_flag;
     int continue_flag;
     int loop_depth;
-    /* Where the error happened, and how to explain it. */
-    int error_line;
+    int error_line;  // where the error happened
     int error_col;
-    char error_text[AS_LINE_MAX];
-    /* The statement being run, kept up to date by as_exec_block(). */
-    int cur_line;
-    int cur_col;
+    char error_text[AS_LINE_MAX];  // and how to explain it
+    int cur_line;                  // the statement being run, kept up
+    int cur_col;                   // to date by as_exec_block()
 };
 
 /* One parsed line in the script. */
 struct as_line {
-    char* text;
-    int orig_line;
-    int orig_col;
-    int indent;
+    char* text;     // the line, leading spaces removed
+    int orig_line;  // line number in the original file
+    int orig_col;   // column the text starts at
+    int indent;     // leading spaces, used to build blocks
 };
 
 /* Forward declarations. */
@@ -728,10 +725,8 @@ static struct as_var* as_env_lookup(struct as_env* env, const char* name) {
     return 0;
 }
 
-/* Register a variable in RAM. Declaring a name that already exists
- * re-initialises it with the new type, so a `define` inside a loop or an
- * `if` body works the way a shell script expects instead of failing on the
- * second pass. */
+/* Register a variable; an existing one is re-initialised, so a `define`
+ * inside a loop or an `if` body does not fail on its second pass. */
 static struct as_var* as_env_define(struct as_env* env, const char* name,
                                     enum as_type type, enum as_type elem_type) {
     if (name[0] == '\0') {
@@ -1105,6 +1100,7 @@ static struct as_value as_parse_unary(struct as_env* env, struct as_lexer* lex);
 static struct as_value as_parse_primary(struct as_env* env,
                                         struct as_lexer* lex);
 
+/* Lowest precedence: || and or. */
 static struct as_value as_parse_or(struct as_env* env, struct as_lexer* lex) {
     struct as_value left = as_parse_and(env, lex);
     while (lex->cur.kind == TOK_OR) {
@@ -1120,6 +1116,7 @@ static struct as_value as_parse_or(struct as_env* env, struct as_lexer* lex) {
     return left;
 }
 
+/* && and and, one step tighter than ||. */
 static struct as_value as_parse_and(struct as_env* env, struct as_lexer* lex) {
     struct as_value left = as_parse_equality(env, lex);
     while (lex->cur.kind == TOK_AND) {
@@ -1204,6 +1201,7 @@ static struct as_value as_parse_relational(struct as_env* env,
     return left;
 }
 
+/* Addition and subtraction, which also joins strings. */
 static struct as_value as_parse_add(struct as_env* env, struct as_lexer* lex) {
     struct as_value left = as_parse_mul(env, lex);
     while (lex->cur.kind == TOK_PLUS || lex->cur.kind == TOK_MINUS) {
@@ -1263,6 +1261,7 @@ static struct as_value as_parse_add(struct as_env* env, struct as_lexer* lex) {
     return left;
 }
 
+/* Multiplication, division and remainder. */
 static struct as_value as_parse_mul(struct as_env* env, struct as_lexer* lex) {
     struct as_value left = as_parse_unary(env, lex);
     while (lex->cur.kind == TOK_STAR || lex->cur.kind == TOK_SLASH ||
@@ -1436,8 +1435,8 @@ static struct as_value as_parse_primary(struct as_env* env,
 
         struct as_var* var = as_env_lookup(env, name);
         if (var == 0) {
-            /* A command that prints text acts as a string value here, so
-             * "pwd + \"/programs\"" reads the directory the command shows. */
+            // A command that prints text acts as a string value here, so
+            // "pwd + \"/programs\"" reads the directory the command shows.
             if (command_returns_output(name)) {
                 as_run_command_value(env, name, &val);
             } else {
@@ -1486,8 +1485,7 @@ static struct as_value as_eval_expression(struct as_env* env, const char* str) {
     return as_parse_or(env, &lex);
 }
 
-/* Is the text at p the whole keyword kw, and not the start of a longer
- * word? Keeps `if dot > 0 do` from being cut at the "do" in "dot". */
+/* Is p the whole keyword kw? Keeps `if dot > 0 do` from matching "do". */
 static int as_word_is(const char* p, const char* kw) {
     size_t len = strlen(kw);
     char after;
@@ -1507,8 +1505,7 @@ static int as_is_block_start(const char* t) {
            strncmp(t, "if ", 3) == 0;
 }
 
-/* Does this line close a block? "done" is the old spelling and closes any
- * block; the specific endings make the code easier to read. */
+/* Does this line close a block? "done" closes any, the rest name theirs. */
 static int as_is_block_end(const char* t) {
     return strcmp(t, "done") == 0 || strcmp(t, "done;") == 0 ||
            strcmp(t, "endfor") == 0 || strcmp(t, "endfor;") == 0 ||
@@ -1550,8 +1547,8 @@ static int as_command_takes_path(const char* cmd) {
            strcmp(cmd, "find") == 0 || strcmp(cmd, "run") == 0;
 }
 
-/* Should the argument be evaluated as an expression? That is the case when
- * it starts with a command that returns text, as in  cd pwd + "/x" . */
+/* Is the argument an expression? Yes when it starts with an output command,
+ * as in  cd pwd + "/x" . */
 static int as_arg_is_expression(const char* rest) {
     char word[32];
     int len = 0;
@@ -1721,7 +1718,7 @@ static void as_exec_system_cmd(struct as_env* env, const char* line) {
 
 /* Execute a "define" statement. */
 static void as_exec_define(struct as_env* env, const char* stmt) {
-    const char* p = stmt + 6; /* skip "define" */
+    const char* p = stmt + 6;  // skip "define"
     while (*p == ' ') p++;
 
     char name[AS_NAME_MAX];
@@ -1832,7 +1829,7 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
     while (*p == ' ') p++;
     as_copy_text(body, p, sizeof(body));
 
-    /* A trailing "endl" is the newline instruction, not a value. */
+    // A trailing "endl" is the newline instruction, not a value.
     body_len = (int)strlen(body);
     while (body_len > 0 &&
            (body[body_len - 1] == ' ' || body[body_len - 1] == '\t' ||
@@ -1904,7 +1901,7 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
             a_start[--a_end] = '\0';
         }
 
-        /* "endl" ends the line instead of printing a value. */
+        // "endl" ends the line instead of printing a value.
         if (strcmp(a_start, "endl") == 0) {
             newline = 1;
             while (*p == ' ') p++;
@@ -2047,7 +2044,7 @@ static void as_input_expect(enum as_type type, int32_t lo, uint32_t hi,
             low, high);
 }
 
-/* Execute an "input" statement: reads and validates a line for a variable.*/
+/* Execute an "input" statement: read a line and validate it for a variable. */
 static void as_exec_input(struct as_env* env, const char* stmt) {
     const char* p = stmt + 5;
     while (*p == ' ' || *p == '\t') p++;
@@ -2281,8 +2278,8 @@ static void as_exec_input(struct as_env* env, const char* stmt) {
         }
     }
 
-    /* typeof is the type the line is read as, so the variable has to hold
-     * that same type once input stores the value. */
+    // typeof is the type the line is read as, so the variable has to hold
+    // that same type once input stores the value.
     if (typeof_given && (var == 0 || var->val.type != type)) {
         var = as_env_define(env, var_name, type, AS_TYPE_VOID);
         if (var == 0) {
@@ -2368,7 +2365,7 @@ static void as_exec_input(struct as_env* env, const char* stmt) {
     as_value_free(&v);
 }
 
-/* Execute an assignment statement: <var> = <expr> or <var>[<idx>] = <expr>. */
+/* Execute an assignment: <var> = <expr> or <var>[<index>] = <expr>. */
 static void as_exec_assignment(struct as_env* env, const char* stmt) {
     const char* eq = strchr(stmt, '=');
     if (eq == 0) return;
@@ -2487,6 +2484,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
             continue;
         }
 
+        // Loop and script control, which only set a flag for the caller.
         if (strcmp(stmt, "break") == 0 || strcmp(stmt, "break;") == 0) {
             if (env->loop_depth == 0) {
                 as_errorf(env, "'break' outside a loop.");
@@ -2511,6 +2509,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
             return 0;
         }
 
+        // The simple statements: one per line, no block around them.
         if (strncmp(stmt, "define ", 7) == 0) {
             as_exec_define(env, stmt);
             i++;
@@ -2538,6 +2537,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
             continue;
         }
 
+        // for over an array: `for x in arr do`.
         if (strncmp(stmt, "for ", 4) == 0) {
             int done_line = as_find_matching_done(lines, end + 1, i);
             if (done_line < 0) {
@@ -2615,6 +2615,8 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                 i = done_line + 1;
                 continue;
             } else {
+                // Counting loop: `for i from A to B step S do`, where the
+                // step defaults to 1 and may be negative.
                 struct as_var* iter_var = as_env_lookup(env, var_name);
                 if (iter_var == 0) {
                     iter_var = as_env_define(env, var_name, AS_TYPE_INT32,
@@ -2722,6 +2724,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
             }
         }
 
+        // while: re-evaluate the condition before every pass.
         if (strncmp(stmt, "while ", 6) == 0) {
             int done_line = as_find_matching_done(lines, end + 1, i);
             if (done_line < 0) {
@@ -2766,6 +2769,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
             continue;
         }
 
+        // if / else if / else: walk the branches until one runs.
         if (strncmp(stmt, "if ", 3) == 0) {
             int done_line = as_find_matching_done(lines, end + 1, i);
             if (done_line < 0) {
@@ -2842,6 +2846,8 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
             continue;
         }
 
+        // A bare `name = ...` is an assignment; anything else is left to the
+        // command dispatcher.
         const char* eq_ptr = strchr(stmt, '=');
         if (eq_ptr != 0 && eq_ptr != stmt && *(eq_ptr - 1) != '=' &&
             *(eq_ptr - 1) != '!' && *(eq_ptr - 1) != '<' &&

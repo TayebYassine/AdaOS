@@ -7,25 +7,11 @@
 #include "screen.h"
 #include "serial.h"
 
-// kprintf: printf for the kernel. Writes straight to the screen
-// through screen.c and, when COM1 is up, to the serial console too -
-// so the same messages can be watched on the screen or captured to a
-// file. It understands a small set of format specifiers (%s, %c, %d,
-// %x, %%) - enough for messages that contain numbers.
-//
-// The text is collected in a small buffer and handed to print() and
-// serial_write() in batches. That is not just tidiness: print_char()
-// programs the VGA CRT controller to move the hardware cursor, and a
-// virtual machine on a slower host can turn each of those port writes
-// into a display update. One update per line instead of one per
-// character is the difference between instant and visible lag.
-
 /* Characters collected before they are shown. */
 #define KPRINTF_BATCH 192
 
-/* One kprintf's output on its way to the screen. It lives on the stack,
- * so a message printed from an interrupt cannot trample the one the
- * shell is in the middle of. */
+/* One kprintf's output on its way out; on the stack, so an interrupt
+ * cannot trample the message the shell is printing. */
 struct output {
     char text[KPRINTF_BATCH];
     int length;
@@ -146,6 +132,7 @@ void kprintf(const char* fmt, ...) {
                 break;
             }
             case '\0': {
+                // A '%' at the very end: print it and stop.
                 put(&out, '%');
                 flush(&out);
                 va_end(args);

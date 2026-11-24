@@ -6,17 +6,6 @@
 #include "libc.h"
 #include "multiboot.h"
 
-// The physical memory manager: it decides who gets which 4 KiB page of
-// real RAM. It owns one bitmap with a bit per page - 1 means "in use",
-// 0 means "free" - which is built once at boot from the memory map the
-// bootloader hands over.
-//
-// The bitmap covers the first 4 GiB, the most this kernel can address
-// (it runs in 32-bit mode without PAE), so 1,048,576 bits = 128 KiB of
-// .bss. It starts out with every bit set: nothing is usable until the
-// bootloader's map says so, and the map is not believed about anything
-// the kernel itself occupies - the image, the map, the first megabyte.
-
 /* Pages in the address space the bitmap covers (4 GiB / 4 KiB). */
 #define PMM_MAX_PAGES (1024u * 1024u)
 /* Bits in one bitmap word. */
@@ -24,19 +13,19 @@
 /* Words in the bitmap. */
 #define PMM_BITMAP_WORDS (PMM_MAX_PAGES / PMM_BITS_PER_WORD)
 
+// The bitmap covers 4 GiB in 32-bit mode without PAE: 128 KiB of .bss that
+// starts with every page taken, because nothing is usable until the map
+// says so.
 /* One bit per physical page: 1 = in use, 0 = free. */
 static uint32_t bitmap[PMM_BITMAP_WORDS];
 
-/* The highest page the bootloader mentioned, so every scan can stop
- * there instead of walking all 4 GiB. */
+/* The highest page the bootloader mentioned, so scans stop there. */
 static uint32_t page_limit = 1;
 
-/* Where the next allocation starts looking; without it every alloc
- * would rescan from the bottom of memory. */
+/* Where the next allocation starts looking, so it need not rescan from 0. */
 static uint32_t search_hint = 1;
 
-/* First page that is off limits (see pmm_set_alloc_ceiling()): the
- * whole address space until paging narrows it. */
+/* First page that is off limits (see pmm_set_alloc_ceiling()). */
 static uint32_t ceiling_page = PMM_MAX_PAGES;
 
 static struct pmm_stats stats;
@@ -62,8 +51,7 @@ static void page_mark_free(uint32_t page) {
     bitmap[page / PMM_BITS_PER_WORD] &= ~(1u << (page % PMM_BITS_PER_WORD));
 }
 
-/* Turn the pages of a physical range into free ones, rounding the
- * range inwards to whole pages and ignoring anything below 1 MiB. */
+/* Free the whole pages of a physical range, ignoring anything below 1 MiB. */
 static void free_region(uint32_t base, uint32_t length) {
     if (length == 0) {
         return;
@@ -102,8 +90,7 @@ static void free_region(uint32_t base, uint32_t length) {
     }
 }
 
-/* Mark the pages of a physical range as in use, rounding outwards so a
- * partly used page is never handed out. */
+/* Mark the pages of a physical range, rounded outwards so no page is shared. */
 static void reserve_region(uint32_t base, uint32_t length) {
     if (length == 0) {
         return;
@@ -152,13 +139,16 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
     stats.kernel_end = (uint32_t)kernel_end;
 
     if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
-        kprintf("Physical Memory: not booted by multiboot (magic 0x%x), no memory map\n",
-                magic);
+        kprintf(
+            "Physical Memory: not booted by multiboot (magic 0x%x), no memory "
+            "map\n",
+            magic);
         return;
     }
 
     struct multiboot_info* info = (struct multiboot_info*)info_addr;
 
+    // Free every region the map calls available; anything else stays taken.
     if ((info->flags & MULTIBOOT_INFO_MEM_MAP) != 0) {
         uint32_t cursor = info->mmap_addr;
         uint32_t map_end = info->mmap_addr + info->mmap_length;
@@ -192,6 +182,7 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
         return;
     }
 
+    // Whatever the map claims, the kernel's own pieces are never handed out.
     reserve_region(0, MULTIBOOT_LOW_MEMORY_END);
     reserve_region(stats.kernel_start, stats.kernel_end - stats.kernel_start);
     reserve_region(info_addr, sizeof(*info));
@@ -222,13 +213,9 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
     stats.free_pages = free_pages;
     stats.used_pages = stats.total_pages - free_pages;
     stats.available_kb = stats.total_pages * (PMM_PAGE_SIZE / 1024);
-
-    // kprintf("Physical Memory: %d KB usable, %d pages, %d free\n", (int)stats.available_kb,
-    //        (int)stats.total_pages, (int)stats.free_pages);
 }
 
-/* Reserve one free page; 0 means out of memory. Page 0 is never
- * returned, so 0 can safely mean "failed". */
+/* Reserve one free page; 0 means out of memory. Page 0 is never returned. */
 uint32_t pmm_alloc_page(void) {
     if (stats.free_pages == 0) {
         return 0;
@@ -237,6 +224,7 @@ uint32_t pmm_alloc_page(void) {
     uint32_t scan_end = page_limit < ceiling_page ? page_limit : ceiling_page;
     uint32_t page = scan_free_page(search_hint, scan_end);
 
+    // Nothing above the hint: look again from the bottom, up to the hint.
     if (page == 0) {
         uint32_t wrap_end = search_hint < scan_end ? search_hint : scan_end;
 
@@ -276,8 +264,7 @@ void pmm_free_page(uint32_t addr) {
     }
 }
 
-/* Refuse pages from "bytes" upwards: they sit outside whatever the
- * paging layer has mapped, and nothing could reach them. */
+/* Refuse pages from "bytes" upwards: they sit outside the paging map. */
 void pmm_set_alloc_ceiling(uint32_t bytes) {
     uint32_t page = bytes / PMM_PAGE_SIZE;
 

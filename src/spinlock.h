@@ -3,17 +3,19 @@
 
 #include <stdint.h>
 
-/* A lock that keeps interrupts out while it is held. All zeroes means
- * unlocked, so a file-scope static needs no explicit setup. */
+// A lock around kernel state that an interrupt handler could also reach.
+// Taking it saves the interrupt flag and switches interrupts off, so no handler
+// can interrupt the holder and wait forever for it; releasing it puts the saved
+// flag back, which makes nesting safe and leaves a caller that already had
+// interrupts off undisturbed. The flag itself is taken with an atomic exchange.
+
+/* One lock: all zeroes means unlocked, so a static needs no setup. */
 struct spinlock {
     volatile uint32_t locked;
-    /* the interrupt state from before the lock was taken */
-    uint32_t flags;
+    uint32_t flags;  // interrupt state from before the lock was taken
 };
 
-/* Take the lock, with hardware interrupts off until spinlock_release()
- * puts them back. Locks must be released in the opposite order they
- * were taken. */
+/* Take the lock, with interrupts off; locks release in reverse order. */
 void spinlock_acquire(struct spinlock* lock);
 
 /* Release the lock and restore the interrupt state from before it. */

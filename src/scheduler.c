@@ -9,26 +9,10 @@
 #include "shell.h"
 #include "timer.h"
 
-// The scheduler: kernel threads, switched on every timer tick.
-//
-// Everything here leans on the interrupt machinery that was already
-// there. When IRQ0 fires, isr.asm has pushed a complete register frame
-// - the interrupted task's whole world - on its stack. So "switch
-// task" means only this: remember where that frame is, point esp at
-// another task's saved frame, and let context.asm pop and iret from
-// there. No task ever knows it was off the CPU.
-//
-// Tasks are round-robin: each tick the next runnable one gets the CPU.
-// Sleeping is the same trick in reverse - the task marks itself
-// SLEEPING, and the tick that reaches its wake time marks it READY -
-// so "sleep 5" waits five seconds while the idle task and the keyboard
-// keep working, instead of halting the CPU inside the command.
-
 /* Tasks the scheduler can hold. The shell and the idle task are two. */
 #define MAX_TASKS 8
 
-/* Stack each task gets. Interrupt handlers run on whatever stack they
- * interrupted, so this has to be roomy, not tight. */
+/* Stack each task gets; interrupt handlers run on it, so it is roomy. */
 #define TASK_STACK_SIZE (16u * 1024u)
 
 /* Dwords in a saved interrupt frame: 4 segment registers, 8 general
@@ -37,19 +21,16 @@
 
 /* Task states. */
 enum task_state {
-    TASK_READY,
-    TASK_RUNNING,
-    TASK_SLEEPING,
-    TASK_DEAD,
+    TASK_READY,     // can run as soon as it is picked
+    TASK_RUNNING,   // on the CPU right now
+    TASK_SLEEPING,  // waiting for its wake tick
+    TASK_DEAD,      // finished or faulted, never runs again
 };
 
 struct task {
-    /* where its saved interrupt frame starts */
-    uint32_t esp;
-    /* the block from kmalloc(); 0 once a dead task gave it back */
-    uint8_t* stack;
-    /* never returns */
-    void (*entry)(void);
+    uint32_t esp;         // start of its saved interrupt frame
+    uint8_t* stack;       // the block from kmalloc(); 0 once reclaimed
+    void (*entry)(void);  // where a fresh task begins; never returns
     enum task_state state;
     uint32_t wake_tick;
     uint32_t runtime_ticks;
@@ -66,20 +47,16 @@ static struct task* current = 0;
 /* Set by the timer tick, consumed by interrupt_handler(). */
 static volatile int need_resched = 0;
 
-/* How often the idle task came back from hlt: proof the machine is
- * still doing something while everything else sleeps. */
+/* How often the idle task came back from hlt. */
 static volatile uint32_t idle_wakes = 0;
 
 /* From context.asm; never returns. */
 extern void context_switch(uint32_t esp) __attribute__((noreturn));
 
-/* Defined below; a task whose entry function returned uses it to leave
- * the CPU for good. */
+/* Defined below; a task whose entry function returned uses it to leave. */
 static void retire_and_switch(struct task* dying) __attribute__((noreturn));
 
-/* The idle task: halt until the next interrupt, forever. This is what
- * runs when nothing else can, and what keeps "sleep" from meaning "the
- * machine is stuck". */
+/* The idle task: halt until the next interrupt, forever. */
 static void idle_main(void) {
     for (;;) {
         __asm__ volatile("hlt");
@@ -115,27 +92,26 @@ static const char* state_name(enum task_state state) {
     }
 }
 
-/* Build the initial interrupt frame on a fresh stack, exactly the shape
- * isr.asm leaves behind, so context_switch() can start the task by
- * popping and iretting into task_bootstrap(). */
+/* Build the initial interrupt frame, exactly the shape isr.asm leaves behind,
+ * so context_switch() can start the task by iretting into task_bootstrap(). */
 static uint32_t build_frame(uint32_t* frame) {
-    frame[0] = 0x10; /* gs: kernel data selector from gdt.c */
-    frame[1] = 0x10; /* fs */
-    frame[2] = 0x10; /* es */
-    frame[3] = 0x10; /* ds */
-    frame[4] = 0;    /* edi */
-    frame[5] = 0;    /* esi */
-    frame[6] = 0;    /* ebp */
-    frame[7] = 0;    /* esp, ignored by popa */
-    frame[8] = 0;    /* ebx */
-    frame[9] = 0;    /* edx */
-    frame[10] = 0;   /* ecx */
-    frame[11] = 0;   /* eax */
-    frame[12] = 0;   /* interrupt number */
-    frame[13] = 0;   /* error code */
-    frame[14] = (uint32_t)task_bootstrap; /* eip */
-    frame[15] = 0x08;                     /* cs: kernel code selector */
-    frame[16] = 0x202;                    /* eflags: interrupts on */
+    frame[0] = 0x10;  // gs: kernel data selector from gdt.c
+    frame[1] = 0x10;  // fs
+    frame[2] = 0x10;  // es
+    frame[3] = 0x10;  // ds
+    frame[4] = 0;     // edi
+    frame[5] = 0;     // esi
+    frame[6] = 0;     // ebp
+    frame[7] = 0;     // esp, ignored by popa
+    frame[8] = 0;     // ebx
+    frame[9] = 0;     // edx
+    frame[10] = 0;    // ecx
+    frame[11] = 0;    // eax
+    frame[12] = 0;    // interrupt number
+    frame[13] = 0;    // error code
+    frame[14] = (uint32_t)task_bootstrap;
+    frame[15] = 0x08;   // cs: kernel code selector
+    frame[16] = 0x202;  // eflags: interrupts on
 
     return (uint32_t)frame;
 }
@@ -165,6 +141,7 @@ static struct task* task_create(const char* name, void (*entry)(void)) {
     task->state = TASK_READY;
     task->name = name;
 
+    // The frame sits at the very top of the stack, aligned down to 16 bytes.
     uint32_t top = (((uint32_t)stack + TASK_STACK_SIZE) & ~0xFu) - 4u;
     task->esp = build_frame((uint32_t*)(top - FRAME_DWORDS * 4));
 
@@ -179,19 +156,13 @@ void scheduler_init(void) {
     struct task* shell = task_create("shell", shell_main);
     struct task* idle = task_create("idle", idle_main);
 
-    if (shell == 0 || idle == 0) {
-        // kprintf("Scheduler: could not create the tasks\n");
-        return;
-    }
-
-    // kprintf("Scheduler: %d tasks, %d KB stacks\n", task_count,
-    //        (int)(TASK_STACK_SIZE / 1024));
+    (void)shell;
+    (void)idle;
 }
 
 /* Leave the boot context behind and become the first task. */
 void scheduler_start(void) {
     if (task_count == 0) {
-        // kprintf("Scheduler: nothing to run\n");
         for (;;) {
             __asm__ volatile("hlt");
         }
@@ -219,9 +190,8 @@ static int next_runnable(int index) {
     return -1;
 }
 
-/* Stop running "dying" for good and give the CPU to the next task. The
- * stack is not freed here - this code is still standing on it - but by
- * whoever runs next, in reap_dead_tasks(). Never returns. */
+/* Stop running "dying" for good and give the CPU to the next task. Its stack
+ * is not freed here - this code still stands on it - but by the next tick. */
 static void retire_and_switch(struct task* dying) {
     dying->state = TASK_DEAD;
 
@@ -242,10 +212,8 @@ static void retire_and_switch(struct task* dying) {
     context_switch(current->esp);
 }
 
-/* A task faulted: retire it and let another one run. The interrupt
- * frame it faulted on is abandoned with its stack - nothing resumes a
- * dead task - and the next tick reclaims both. Returns 0 when the fault
- * did not come from a task, which the caller has to treat as fatal. */
+/* Retire the running task after a fault and switch away; 0 when no task
+ * faulted, which the caller has to treat as fatal. */
 int scheduler_kill_current(struct interrupt_frame* frame) {
     (void)frame;
 
@@ -256,10 +224,7 @@ int scheduler_kill_current(struct interrupt_frame* frame) {
     retire_and_switch(current);
 }
 
-/* Give a dead task's stack back. The task running right now may be newly
- * dead and still standing on its stack, so it is skipped; the tick that
- * runs after it has been switched away cleans it up. The task entry
- * itself stays, so "tasks" can still show it as DEAD. */
+/* Give a dead task's stack back, skipping the task running right now. */
 static void reap_dead_tasks(void) {
     for (int i = 0; i < task_count; i++) {
         struct task* task = tasks[i];
@@ -310,6 +275,7 @@ void scheduler_switch_from(struct interrupt_frame* frame) {
 
     int index = next_runnable(current_index);
 
+    // Only one runnable task: stay where we are.
     if (index < 0 || index == current_index) {
         return;
     }
@@ -343,6 +309,7 @@ void scheduler_sleep_ms(uint32_t milliseconds) {
     me->wake_tick = timer_ticks() + ticks;
     me->state = TASK_SLEEPING;
 
+    // The tick that reaches wake_tick makes the task READY again.
     while (me->state == TASK_SLEEPING) {
         interrupt_wait();
     }

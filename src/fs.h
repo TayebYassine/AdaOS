@@ -3,26 +3,32 @@
 
 #include <stdint.h>
 
+// The RAM file system: a tree of nodes in the kernel heap, rooted at "/", with
+// files held as byte buffers and directories as lists of children sorted by
+// name. Paths are resolved relative to a current directory using "." and "..".
+// Every call that walks or changes the tree holds a lock, because an interrupt
+// handler or another task can reach it too.
+
 /* Longest name one file or directory may have. */
-#define FS_NAME_MAX 28
+#define FS_NAME_MAX 28  // including the ending '\0'
 /* Longest absolute path, current directory included. */
-#define FS_PATH_MAX 128
+#define FS_PATH_MAX 128  // including the ending '\0'
 
 /* What a node in the tree holds. */
 enum fs_kind {
-    FS_FILE,
-    FS_DIR,
+    FS_FILE,  // a file: "data" holds its bytes
+    FS_DIR,   // a directory: "children" holds its entries
 };
 
 /* One file or directory; children chain through sibling, sorted by name. */
 struct fs_node {
     char name[FS_NAME_MAX];
     enum fs_kind kind;
-    uint32_t size;
-    char* data;
+    uint32_t size;  // bytes of data
+    char* data;     // file contents, heap owned
     struct fs_node* parent;
-    struct fs_node* children;
-    struct fs_node* sibling;
+    struct fs_node* children;  // first child of a directory
+    struct fs_node* sibling;   // next entry in the parent's list
 };
 
 /* Build the empty tree with just "/" in it; call once after the heap. */

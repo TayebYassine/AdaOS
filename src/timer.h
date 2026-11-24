@@ -3,6 +3,11 @@
 
 #include <stdint.h>
 
+// The Programmable Interval Timer (PIT): a counter that counts down from a
+// programmed divisor and raises IRQ0 each time it reaches zero. That interrupt
+// is the kernel's time base - uptime, sleeps, the wall clock and the scheduler
+// all count its ticks - so it is set to 100 per second.
+
 /* Start the PIT on IRQ0; call once, after interrupt_init(). */
 void timer_init(void);
 

@@ -8,39 +8,7 @@
 #include "screen.h"
 #include "timer.h"
 
-// Tetris game for AdaOS.
-//
-// The screen is split into:
-//   row 0         top bar: "AdaOS Tetris"
-//   rows 1-22     two centered panels side by side with white borders:
-//                 - left panel: 10 width x 20 height playfield where blocks
-//                 drop
-//                 - right panel: east border area showing score and next block
-//   row 24        bottom bar: "^E exit   ^R restart"
-//
-// Blocks are drawn using ASCII characters with the colors shown in the
-// reference:
-//   I piece: Purple (0x05)
-//   O piece: Yellow (0x0E)
-//   Z piece: Orange (0x06)
-//   S piece: Lime (0x0A)
-//   L piece: Pink / Light Magenta (0x0D)
-//   J piece: Blue (0x09)
-//   T piece: Red (0x0C)
-//
-// Controls:
-//   Up Arrow    - Rotate block
-//   Left Arrow  - Move left
-//   Right Arrow - Move right
-//   Down Arrow  - Move straight down
-//   Space       - Hard drop to bottom
-//   ^E          - Exit to shell
-//   ^R          - Restart game
-//
-// When a row is completely full, it flashes 4 times over 1 second (0.25s per
-// cycle) before disappearing and letting the rows above drop down.
-
-/* Board dimensions */
+/* Board dimensions, in cells; each cell is two screen columns wide. */
 #define BOARD_WIDTH 10
 #define BOARD_HEIGHT 20
 
@@ -55,11 +23,11 @@
 #define SIDE_TOP 1
 #define SIDE_BOT 22
 
-/* Timing */
-#define DEFAULT_DROP_TICKS 50
-#define FLASH_HALF_CYCLE_MS 125
+/* Timing. */
+#define DEFAULT_DROP_TICKS 50    // ticks per gravity step at the start
+#define FLASH_HALF_CYCLE_MS 125  // half of one flash, four flashes per row
 
-/* Colors */
+/* Colours. */
 #define COLOR_BORDER 0x0F
 #define COLOR_BAR 0x70
 #define COLOR_EMPTY 0x07
@@ -68,7 +36,7 @@
 #define COLOR_DIVIDER 0x08
 #define COLOR_GAMEOVER 0x4F
 
-/* Box drawing characters (CP437) */
+/* Box drawing characters (CP437). */
 #define BOX_HORIZ ((char)0xCD)
 #define BOX_VERT ((char)0xBA)
 #define BOX_TOPLEFT ((char)0xC9)
@@ -77,56 +45,57 @@
 #define BOX_BOTRIGHT ((char)0xBC)
 #define BOX_DIVIDER ((char)0xC4)
 
+/* One cell of a piece, relative to the piece's top-left corner. */
 struct block_offset {
     int r;
     int c;
 };
 
-/* 7 tetrominoes */
+/* The 7 tetrominoes: [piece][rotation][cell]. */
 static const struct block_offset piece_shapes[7][4][4] = {
-    /* PIECE_I: 4x1 bar */
+    // I piece: 4x1 bar
     {
         {{1, 0}, {1, 1}, {1, 2}, {1, 3}},
         {{0, 2}, {1, 2}, {2, 2}, {3, 2}},
         {{2, 0}, {2, 1}, {2, 2}, {2, 3}},
         {{0, 1}, {1, 1}, {2, 1}, {3, 1}},
     },
-    /* PIECE_O: 2x2 square */
+    // O piece: 2x2 square
     {
         {{0, 1}, {0, 2}, {1, 1}, {1, 2}},
         {{0, 1}, {0, 2}, {1, 1}, {1, 2}},
         {{0, 1}, {0, 2}, {1, 1}, {1, 2}},
         {{0, 1}, {0, 2}, {1, 1}, {1, 2}},
     },
-    /* PIECE_Z */
+    // Z piece
     {
         {{0, 0}, {0, 1}, {1, 1}, {1, 2}},
         {{0, 2}, {1, 1}, {1, 2}, {2, 1}},
         {{1, 0}, {1, 1}, {2, 1}, {2, 2}},
         {{0, 1}, {1, 0}, {1, 1}, {2, 0}},
     },
-    /* PIECE_S */
+    // S piece
     {
         {{0, 1}, {0, 2}, {1, 0}, {1, 1}},
         {{0, 1}, {1, 1}, {1, 2}, {2, 2}},
         {{1, 1}, {1, 2}, {2, 0}, {2, 1}},
         {{0, 0}, {1, 0}, {1, 1}, {2, 1}},
     },
-    /* PIECE_L*/
+    // L piece
     {
         {{0, 0}, {1, 0}, {2, 0}, {2, 1}},
         {{0, 0}, {0, 1}, {0, 2}, {1, 0}},
         {{0, 0}, {0, 1}, {1, 1}, {2, 1}},
         {{0, 2}, {1, 0}, {1, 1}, {1, 2}},
     },
-    /* PIECE_J */
+    // J piece
     {
         {{0, 1}, {1, 1}, {2, 0}, {2, 1}},
         {{0, 0}, {1, 0}, {1, 1}, {1, 2}},
         {{0, 0}, {0, 1}, {1, 0}, {2, 0}},
         {{0, 0}, {0, 1}, {0, 2}, {1, 2}},
     },
-    /* PIECE_T */
+    // T piece
     {
         {{0, 1}, {1, 0}, {1, 1}, {1, 2}},
         {{0, 1}, {1, 1}, {1, 2}, {2, 1}},
@@ -135,14 +104,15 @@ static const struct block_offset piece_shapes[7][4][4] = {
     },
 };
 
+/* Colour of each piece, in the order above. */
 static const uint8_t piece_colors[7] = {
-    0x05, /* I: Purple */
-    0x0E, /* O: Yellow */
-    0x06, /* Z: Orange / Brown */
-    0x0A, /* S: Lime / Green */
-    0x0D, /* L: Light Magenta / Pink */
-    0x09, /* J: Light Blue */
-    0x0C  /* T: Light Red */
+    0x05,  // I: purple
+    0x0E,  // O: yellow
+    0x06,  // Z: orange
+    0x0A,  // S: lime
+    0x0D,  // L: pink
+    0x09,  // J: light blue
+    0x0C,  // T: light red
 };
 
 static uint8_t board[BOARD_HEIGHT][BOARD_WIDTH];
@@ -523,6 +493,7 @@ static void game_restart(void) {
     update_side_panel();
 }
 
+/* Play until Ctrl+E, then give the screen back to the shell. */
 void tetris_run(void) {
     screen_save(saved_cells, &saved_row, &saved_col);
     clock_pause();

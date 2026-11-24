@@ -6,43 +6,31 @@
 #include "kmalloc.h"
 #include "libc.h"
 
-// VGA text-mode screen driver: writes characters into the text buffer
-// at 0xB8000 (80x25 cells, one word each: character + color), tracks
-// the cursor, scrolls at the bottom edge, and keeps the hardware
-// cursor on screen.
-
-/* Number of character columns (SCREEN_COLS in screen.h) */
-#define SCREEN_WIDTH SCREEN_COLS
-/* Number of character rows (SCREEN_ROWS in screen.h) */
-#define SCREEN_HEIGHT SCREEN_ROWS
-/* Physical address of the VGA text buffer */
+/* Physical address of the VGA text buffer. */
 #define VGA_MEMORY 0xB8000
 
-/* Bright white text on a black background */
+/* Bright white text on a black background. */
 #define DEFAULT_ATTRIBUTE 0x0F
 
-/* CRTC registers for the cursor's shape and visibility */
+/* CRTC registers holding the cursor's shape. */
 #define CRTC_CURSOR_START 0x0A
 #define CRTC_CURSOR_END 0x0B
 
-/* Index port of the CRT controller (0x3D4/0x3D5 on colour text mode) */
+/* CRT controller ports in colour text mode. */
 #define CRTC_INDEX_PORT 0x3D4
 #define CRTC_DATA_PORT 0x3D5
 
 static int cursor_row = 0;
 static int cursor_col = 0;
 
-/* The cell the hardware cursor was last put on; -1 until it is programmed.
- * Port writes to the CRT controller are expensive on some virtual machines,
- * so they are skipped when the cursor is already where it belongs. */
+/* The cell the hardware cursor was last put on; -1 until it is programmed. */
 static int cursor_programmed = -1;
 
 /* How many rows at the top print() must not touch. */
 static int top_row = 0;
 
-/* Nested output captures used by AdaScript commands. The first characters
- * of a capture grow their buffer on the heap; an allocation failure just
- * stops that capture where it is. */
+// Nested output captures: each grows its own heap buffer, and an allocation
+// failure simply stops that capture where it is.
 #define CAPTURE_MAX_DEPTH 8
 
 struct capture_state {
@@ -64,7 +52,7 @@ static void capture_char(char c) {
 
     state = &captures[capture_depth - 1];
 
-    /* A backspace takes back the character before it. */
+    // A backspace takes back the character before it.
     if (c == '\b') {
         if (state->length > 0) {
             state->length--;
@@ -91,6 +79,7 @@ static void capture_char(char c) {
     state->length++;
 }
 
+/* Start collecting output instead of drawing it. */
 void screen_capture_begin(void) {
     if (capture_depth < CAPTURE_MAX_DEPTH) {
         captures[capture_depth].text = 0;
@@ -101,6 +90,7 @@ void screen_capture_begin(void) {
     capture_depth++;
 }
 
+/* Stop the newest capture and hand its text to the caller. */
 char* screen_capture_end(void) {
     struct capture_state* state;
     char* text;
@@ -133,7 +123,7 @@ char* screen_capture_end(void) {
 }
 
 /* Turn a (row, column) pair into an index into the VGA memory array. */
-static int cell_index(int row, int col) { return row * SCREEN_WIDTH + col; }
+static int cell_index(int row, int col) { return row * SCREEN_COLS + col; }
 
 /* Write one character with a given color into one specific cell. */
 static void put_char_at(int row, int col, char c, uint8_t attribute) {
@@ -142,10 +132,7 @@ static void put_char_at(int row, int col, char c, uint8_t attribute) {
     vga[cell_index(row, col)] = ((uint16_t)attribute << 8) | (uint8_t)c;
 }
 
-/* Move "count" cells from "src" to "dst", two cells at a time: the text
- * buffer is 16-bit cells, every row starts on a 4-byte boundary, and the
- * destination is always below the source here, so a forward copy of 32-bit
- * words is safe. Halves the number of accesses video memory sees. */
+/* Move "count" cells from "src" to "dst", two at a time. */
 static void move_cells(volatile uint16_t* dst, volatile uint16_t* src,
                        int count) {
     volatile uint32_t* wide_dst = (volatile uint32_t*)dst;
@@ -185,15 +172,15 @@ static void clear_cells(void) {
 /* Move everything one line up, so the bottom line becomes empty. */
 static void scroll(void) {
     volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;
-    int rows = SCREEN_HEIGHT - top_row - 1;
+    int rows = SCREEN_ROWS - top_row - 1;
 
     move_cells(vga + cell_index(top_row, 0), vga + cell_index(top_row + 1, 0),
-               rows * SCREEN_WIDTH);
+               rows * SCREEN_COLS);
 
-    fill_cells(vga + cell_index(SCREEN_HEIGHT - 1, 0), SCREEN_WIDTH,
+    fill_cells(vga + cell_index(SCREEN_ROWS - 1, 0), SCREEN_COLS,
                ((uint16_t)DEFAULT_ATTRIBUTE << 8) | ' ');
 
-    cursor_row = SCREEN_HEIGHT - 1;
+    cursor_row = SCREEN_ROWS - 1;
 }
 
 /* Go to the start of the next line, scrolling if already at the bottom. */
@@ -201,7 +188,7 @@ static void new_line(void) {
     cursor_col = 0;
     cursor_row++;
 
-    if (cursor_row >= SCREEN_HEIGHT) {
+    if (cursor_row >= SCREEN_ROWS) {
         scroll();
     }
 }
@@ -210,6 +197,8 @@ static void new_line(void) {
 static void update_cursor(void) {
     uint16_t position = (uint16_t)cell_index(cursor_row, cursor_col);
 
+    // Programming the cursor costs four port writes, so skip it when the
+    // cursor is already where it belongs.
     if ((int)position == cursor_programmed) {
         return;
     }
@@ -222,8 +211,7 @@ static void update_cursor(void) {
     outb(CRTC_DATA_PORT, (uint8_t)(position & 0xFF));
 }
 
-/* Set the hardware cursor's shape: scanlines 14-15 of the character cell, i.e.
- * a blinking underscore. */
+/* Give the hardware cursor its shape: a blinking underscore. */
 void screen_init(void) {
     outb(CRTC_INDEX_PORT, CRTC_CURSOR_START);
     outb(CRTC_DATA_PORT, 0x0E);
@@ -237,7 +225,7 @@ static int move_left(void) {
         cursor_col--;
     } else if (cursor_row > 0) {
         cursor_row--;
-        cursor_col = SCREEN_WIDTH - 1;
+        cursor_col = SCREEN_COLS - 1;
     } else {
         return 0;
     }
@@ -247,9 +235,9 @@ static int move_left(void) {
 
 /* Move one cell right; returns 0 at the bottom-right corner. */
 static int move_right(void) {
-    if (cursor_col < SCREEN_WIDTH - 1) {
+    if (cursor_col < SCREEN_COLS - 1) {
         cursor_col++;
-    } else if (cursor_row < SCREEN_HEIGHT - 1) {
+    } else if (cursor_row < SCREEN_ROWS - 1) {
         cursor_row++;
         cursor_col = 0;
     } else {
@@ -282,7 +270,7 @@ static void put_char(char c) {
     put_char_at(cursor_row, cursor_col, c, DEFAULT_ATTRIBUTE);
     cursor_col++;
 
-    if (cursor_col >= SCREEN_WIDTH) {
+    if (cursor_col >= SCREEN_COLS) {
         new_line();
     }
 }
@@ -300,8 +288,8 @@ void screen_set_top(int rows) {
     if (rows < 0) {
         rows = 0;
     }
-    if (rows >= SCREEN_HEIGHT) {
-        rows = SCREEN_HEIGHT - 1;
+    if (rows >= SCREEN_ROWS) {
+        rows = SCREEN_ROWS - 1;
     }
 
     top_row = rows;
@@ -342,7 +330,7 @@ void cursor_right(void) {
 
 /* Draw one character into one cell, leaving the cursor alone. */
 void screen_put_at(int row, int col, char c, uint8_t attribute) {
-    if (row < 0 || row >= SCREEN_HEIGHT || col < 0 || col >= SCREEN_WIDTH) {
+    if (row < 0 || row >= SCREEN_ROWS || col < 0 || col >= SCREEN_COLS) {
         return;
     }
 
@@ -351,18 +339,18 @@ void screen_put_at(int row, int col, char c, uint8_t attribute) {
 
 /* Fill a whole row with one character and colour. */
 void screen_fill_row(int row, char c, uint8_t attribute) {
-    if (row < 0 || row >= SCREEN_HEIGHT) {
+    if (row < 0 || row >= SCREEN_ROWS) {
         return;
     }
 
-    fill_cells((volatile uint16_t*)VGA_MEMORY + cell_index(row, 0),
-               SCREEN_WIDTH, ((uint16_t)attribute << 8) | (uint8_t)c);
+    fill_cells((volatile uint16_t*)VGA_MEMORY + cell_index(row, 0), SCREEN_COLS,
+               ((uint16_t)attribute << 8) | (uint8_t)c);
 }
 
 /* Draw a string on one row, clipped at the right edge. */
 void screen_puts_at(int row, int col, const char* text, uint8_t attribute) {
     for (int i = 0; text[i] != '\0'; i++) {
-        if (col + i >= SCREEN_WIDTH) {
+        if (col + i >= SCREEN_COLS) {
             break;
         }
         if (col + i < 0) {
@@ -378,14 +366,14 @@ void screen_move_to(int row, int col) {
     if (row < 0) {
         row = 0;
     }
-    if (row >= SCREEN_HEIGHT) {
-        row = SCREEN_HEIGHT - 1;
+    if (row >= SCREEN_ROWS) {
+        row = SCREEN_ROWS - 1;
     }
     if (col < 0) {
         col = 0;
     }
-    if (col >= SCREEN_WIDTH) {
-        col = SCREEN_WIDTH - 1;
+    if (col >= SCREEN_COLS) {
+        col = SCREEN_COLS - 1;
     }
 
     cursor_row = row;

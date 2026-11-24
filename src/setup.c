@@ -10,30 +10,20 @@
 #include "screen.h"
 #include "timer.h"
 
-// First-boot setup: the program that runs once, on a disk that has never
-// been prepared, before the shell exists.
-//
-// It shows the welcome screen, waits three seconds, and then lets the user
-// choose: ENTER sets the machine up, ESC turns it off. Setup asks what to
-// prepare - the disk has to be formatted, the sample files and the clock
-// are optional - and every step that takes a while draws a progress bar on
-// the row above the last one, with the job it is doing written above it.
-// When the disk holds a file system the machine reboots, and the next boot
-// goes straight to the shell.
-
-#define COLOR_TEXT 0x0F
-#define COLOR_HINT 0x07
+#define COLOR_TEXT 0x0F  // white text for the messages and the bar
+#define COLOR_HINT 0x07  // grey text for the key hint
 
 #define WELCOME_ROW 12
 #define HINT_ROW 14
 
-#define PROGRESS_ROW (SCREEN_ROWS - 2)
-#define BAR_WIDTH 30
+#define PROGRESS_ROW (SCREEN_ROWS - 2)  // the row above the last one
+#define BAR_WIDTH 30                    // characters between the brackets
 
 #define WELCOME_PAUSE_MS 3000
-#define SHUTDOWN_PAUSE_MS 3000
+#define SHUTDOWN_PAUSE_MS 5000
 #define BAR_PAUSE_MS 150
 
+/* A setup step: it reports progress and returns 1 when it succeeded. */
 typedef int (*setup_work)(void (*progress)(int percent));
 
 /* Write "text" centred on "row"; a row of the screen, not of the cursor. */
@@ -47,9 +37,8 @@ static void center_at(int row, const char* text, uint8_t attribute) {
     screen_puts_at(row, col, text, attribute);
 }
 
-/* Draw the progress bar with "percent" done; a negative percentage removes
- * it. The cursor is left alone, so the text above keeps growing below the
- * last line that was printed. */
+/* Draw the progress bar with "percent" done; a negative percentage removes it.
+ * The cursor is left alone, so the text above keeps growing below it. */
 static void draw_bar(int percent) {
     char number[12];
     char label[16];
@@ -76,6 +65,7 @@ static void draw_bar(int percent) {
     }
     inside[BAR_WIDTH] = '\0';
 
+    // The percentage sits in the middle of the bar.
     utoa((uint32_t)percent, number);
     strcpy(label, number);
     strcat(label, "%");
@@ -103,8 +93,7 @@ static void draw_bar(int percent) {
 /* Handed to the step being run, which calls it as it works. */
 static void progress_update(int percent) { draw_bar(percent); }
 
-/* Run one step: print what it is doing, show the bar while it works, then
- * take the bar away and report whether it worked. */
+/* Run one step: announce it, show the bar while it works, then report. */
 static int run_operation(const char* title, setup_work work) {
     int ok;
 
@@ -130,8 +119,7 @@ static int run_operation(const char* title, setup_work work) {
     return ok;
 }
 
-/* Ask a yes/no question and return 1 for Y, 0 for N, -1 for ESC. Other keys
- * are ignored, so a mistyped answer cannot skip a step. */
+/* Ask a yes/no question: 1 for Y, 0 for N, -1 for ESC. */
 static int ask_yes_no(const char* question) {
     print(question);
 
@@ -158,15 +146,14 @@ static int ask_yes_no(const char* question) {
 /* A step the machine cannot do without was turned down. */
 static void refuse_required(void) __attribute__((noreturn));
 static void refuse_required(void) {
-    print("\nThis operation is required but it has been denied, ");
-    print("shutting down...\n");
+    print("\nError: Formatting disk is required for setup.\n\n");
+    print("Shutting down...\n");
 
     timer_sleep(SHUTDOWN_PAUSE_MS);
     power_shutdown();
 }
 
-/* Read one line of text, echoing it as it is typed; ESC gives up. Returns 1
- * when a line was finished, 0 when the user pressed ESC. */
+/* Read one line of text, echoing it as it is typed; 0 when ESC was pressed. */
 static int read_line(char* out, int max) {
     int length = 0;
 
@@ -238,18 +225,19 @@ static void ask_date_and_time(void) {
         clock_set_date(year, month, day)) {
         print("Date set.\n");
     } else {
-        print("The date was not changed.\n");
+        print("Error: Incorrect date format. The date was not changed.\n");
     }
 
     print("Enter the time [HH:MM:SS]: ");
 
     if (read_line(line, sizeof(line)) && strlen(line) == 8 && line[2] == ':' &&
         line[5] == ':' && parse_number(line, 2, &hour) &&
-        parse_number(line + 3, 2, &minute) && parse_number(line + 6, 2, &second) &&
+        parse_number(line + 3, 2, &minute) &&
+        parse_number(line + 6, 2, &second) &&
         clock_set_time(hour, minute, second)) {
         print("Time set.\n\n");
     } else {
-        print("The time was not changed.\n\n");
+        print("Error: Incorrect time format. The time was not changed.\n");
     }
 }
 
@@ -263,8 +251,7 @@ static int samples_step(void (*progress)(int)) {
     return diskfs_write_tree(progress);
 }
 
-/* Show the welcome screen and wait for ENTER or ESC. Returns 1 for ENTER,
- * and never returns at all when the user wants the machine off. */
+/* Show the welcome screen and return on ENTER; ESC powers the machine off. */
 static int wait_for_choice(void) {
     screen_clear();
     center_at(WELCOME_ROW, "Welcome to AdaOS!", COLOR_TEXT);
@@ -286,6 +273,7 @@ static int wait_for_choice(void) {
     }
 }
 
+/* Offer the first-boot setup when the disk holds no file system yet. */
 void setup_run_if_needed(void) {
     int accept;
 
@@ -304,7 +292,7 @@ void setup_run_if_needed(void) {
     }
 
     if (!run_operation("Formatting the disk...", format_step)) {
-        print("The disk could not be formatted.\n\n");
+        print("Error: The disk could not be formatted.\n\n");
         print("Shutting down...\n");
         timer_sleep(SHUTDOWN_PAUSE_MS);
         power_shutdown();
@@ -313,16 +301,21 @@ void setup_run_if_needed(void) {
     accept = ask_yes_no("Would you like to install the sample files [Y/N]? ");
     if (accept == 1) {
         if (!run_operation("Installing the sample files...", samples_step)) {
-            print("The sample files could not be written.\n\n");
+            print("Error: The sample files could not be written.\n\n");
         }
+    } else {
+        print("Okay, sample files will not be installed.\n\n");
     }
 
     accept = ask_yes_no("Would you like to set the date and time [Y/N]? ");
     if (accept == 1) {
         ask_date_and_time();
+    } else {
+        print("Okay, the date and time will not be updated.\n");
     }
 
-    print("Setup is done, rebooting...\n");
+    print("\nCongratulations! We're all set.\n\n");
+    print("Rebooting in 5 seconds...\n");
     timer_sleep(SHUTDOWN_PAUSE_MS);
     power_reboot();
 }

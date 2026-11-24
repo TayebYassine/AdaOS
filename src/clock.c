@@ -8,27 +8,11 @@
 #include "screen.h"
 #include "version.h"
 
-// The kernel's wall clock: one date and one time that keep moving.
-//
-// The clock starts at boot by reading the Real-Time Clock (RTC) from CMOS,
-// and from then on simply counts the PIT's ticks: timer.c calls
-// clock_tick() once every second, which moves the time on and repaints
-// the top row of the screen.
-//
-// The time is kept in 24-hour form (hour 0-23) and the date is kept the
-// way it is counted; putting the fields into "MM-DD-YYYY HH:MM:SS" order,
-// adding the leading zeros and turning the hour into AM/PM is all the job
-// of clock_stamp().
-//
-// "settime" and "setdate" write those fields from the shell, updating both
-// the in-memory clock and the CMOS RTC so the changes persist across reboots,
-// holding IRQ0 off while they do it: a tick landing in the middle of the
-// write would otherwise mix the old and the new time.
-
-/* CMOS RTC ports and registers */
+/* CMOS address and data ports: write a register number, read or write it. */
 #define CMOS_ADDRESS 0x70
 #define CMOS_DATA 0x71
 
+// CMOS register numbers. The RTC keeps each field in its own byte.
 #define RTC_SECONDS 0x00
 #define RTC_MINUTES 0x02
 #define RTC_HOURS 0x04
@@ -36,8 +20,8 @@
 #define RTC_DAY 0x07
 #define RTC_MONTH 0x08
 #define RTC_YEAR 0x09
-#define RTC_STATUS_A 0x0A
-#define RTC_STATUS_B 0x0B
+#define RTC_STATUS_A 0x0A  // bit 7 is set while the RTC updates
+#define RTC_STATUS_B 0x0B  // bit 1 = 24h, bit 2 = binary, bit 7 = no updates
 #define RTC_CENTURY 0x32
 
 /* Black text on a white bar, exactly like the editor's title row. */
@@ -78,8 +62,7 @@ static int binary_to_bcd(int value) {
     return ((value / 10) * 16) + (value % 10);
 }
 
-/* February has an extra day every fourth year, but not every hundredth,
- * except every four hundredth. */
+/* February has an extra day every fourth year, but not every hundredth. */
 static int is_leap_year(int year) {
     return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
 }
@@ -99,7 +82,7 @@ int clock_days_in_month(int year, int month) {
     return days[month - 1];
 }
 
-/* Read raw registers from CMOS into the provided pointers. */
+/* Read every raw register of the RTC into the given pointers. */
 static void rtc_read_raw(uint8_t* second, uint8_t* minute, uint8_t* hour,
                          uint8_t* day, uint8_t* month, uint8_t* year,
                          uint8_t* century) {
@@ -124,8 +107,7 @@ static int is_valid_date(int year, int month, int day) {
            day <= clock_days_in_month(year, month);
 }
 
-/* Read the date and time from the CMOS Real-Time Clock into "out".
- * Returns 1 on success, or 0 if the values read are not valid. */
+/* Read the RTC into "out"; 1 on success, 0 when a field is not valid. */
 static int rtc_read(struct clock_time* out) {
     interrupt_flags flags = interrupt_save();
     uint8_t sec = 0, min = 0, hr = 0, day = 0, month = 0, yr = 0, cen = 0;
@@ -142,6 +124,8 @@ static int rtc_read(struct clock_time* out) {
 
     rtc_read_raw(&sec, &min, &hr, &day, &month, &yr, &cen);
 
+    // A read that straddles an update returns mixed fields, so read twice
+    // and keep trying until both reads agree.
     for (int attempt = 0; attempt < 5; attempt++) {
         last_sec = sec;
         last_min = min;
@@ -166,6 +150,7 @@ static int rtc_read(struct clock_time* out) {
     status_b = cmos_read(RTC_STATUS_B);
     interrupt_restore(flags);
 
+    // Status B says how the fields are encoded.
     is_bcd = !(status_b & 0x04);
     is_12hr = !(status_b & 0x02);
 
@@ -190,6 +175,7 @@ static int rtc_read(struct clock_time* out) {
         hr = (uint8_t)((hr % 12) + (pm ? 12 : 0));
     }
 
+    // Without a century register, a two-digit year is split at 80.
     if (cen >= 19 && cen <= 99) {
         full_year = cen * 100 + yr;
     } else {
@@ -240,6 +226,7 @@ static void rtc_write_time(int hour, int minute, int second) {
         rtc_hour |= pm;
     }
 
+    // Bit 7 of status B stops the RTC counting while the fields are written.
     cmos_write(RTC_STATUS_B, status_b | 0x80);
 
     cmos_write(RTC_SECONDS, rtc_sec);
@@ -249,8 +236,7 @@ static void rtc_write_time(int hour, int minute, int second) {
     cmos_write(RTC_STATUS_B, status_b & 0x7F);
 }
 
-/* Sakamoto's algorithm: calculate the day of the week (1 = Sunday, 7 =
- * Saturday). */
+/* Sakamoto's algorithm: the day of the week (1 = Sunday, 7 = Saturday). */
 int clock_day_of_week(int year, int month, int day) {
     static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
 
@@ -292,12 +278,15 @@ static void rtc_write_date(int year, int month, int day) {
     cmos_write(RTC_STATUS_B, status_b & 0x7F);
 }
 
+/* Start the clock from the RTC; the top row stays empty until clock_resume().
+ */
 void clock_init(void) {
     struct clock_time rtc_time;
 
     if (rtc_read(&rtc_time)) {
         now = rtc_time;
     } else {
+        // No usable RTC: start from a known date rather than nothing.
         now.year = 2024;
         now.month = 1;
         now.day = 1;
@@ -309,7 +298,7 @@ void clock_init(void) {
     draw_paused = 1;
 }
 
-/* The whole date and time at once, with IRQ0 held off. */
+/* Copy the current date and time out, with IRQ0 held off. */
 void clock_get(struct clock_time* out) {
     interrupt_flags flags = interrupt_save();
 
@@ -362,10 +351,9 @@ static void advance(void) {
     }
 }
 
-/* Write "value" as "width" digits, leading zeros included, at out[at];
- * returns where the next character goes. */
+/* Write "value" as "width" digits at out[at]; returns where the next goes. */
 static int write_number(char* out, int at, int value, int width) {
-    char digits[10];  // enough for 4,294,967,295
+    char digits[10];
     int count = 0;
 
     do {
@@ -429,8 +417,8 @@ void clock_stamp(char* out, int ampm) {
     out[at] = '\0';
 }
 
-/* Paint the shell's top row: the version at the left edge, the date and
- * time right up against the right one. */
+/* Paint the top row: the version at the left, the date and time at the right.
+ */
 void clock_draw(void) {
     char stamp[STAMP_MAX];
 
@@ -451,6 +439,7 @@ void clock_tick(void) {
     clock_draw();
 }
 
+/* Set the time; values outside each field's range are refused. */
 int clock_set_time(int hour, int minute, int second) {
     interrupt_flags flags;
 
@@ -459,6 +448,7 @@ int clock_set_time(int hour, int minute, int second) {
         return 0;
     }
 
+    // IRQ0 is held off so a tick cannot mix the old and the new time.
     flags = interrupt_save();
 
     now.hour = hour;
@@ -474,6 +464,7 @@ int clock_set_time(int hour, int minute, int second) {
     return 1;
 }
 
+/* Set the date; values outside each field's range are refused. */
 int clock_set_date(int year, int month, int day) {
     interrupt_flags flags;
 
@@ -497,6 +488,7 @@ int clock_set_date(int year, int month, int day) {
     return 1;
 }
 
+/* Hand the top row over to a full-screen program. */
 void clock_pause(void) { draw_paused = 1; }
 
 /* Take the top row back, drawn with whatever the time is now. */

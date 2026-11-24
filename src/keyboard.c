@@ -5,28 +5,15 @@
 #include "interrupt.h"
 #include "io.h"
 
-// The keyboard controller stores every key press/release as a "scancode"
-// (a small number) in I/O port 0x60 and raises IRQ1 whenever a new byte
-// is waiting. That IRQ becomes interrupt 0x21 (see pic.c), which lands
-// in keyboard_irq() below: it reads the port, translates the scancode
-// into an ASCII character and drops it into a buffer.
-// keyboard_getchar() then only has to take the next character out of
-// that buffer - it idles the CPU instead of spinning while no key has
-// been typed.
-//
-// Two kinds of scancodes exist:
-//   - "make" codes: the key was pressed
-//   - "break" codes: the key was released (same number with bit 7 set)
-
-/* The keyboard sends its scancodes here */
+/* The keyboard sends its scancodes here. */
 #define KEYBOARD_DATA_PORT 0x60
 
-/* Prefix of "extended" keys (arrows, ...) */
+/* Prefix byte of "extended" keys (arrows, ...). */
 #define SCANCODE_EXTENDED 0xE0
-/* Bit 7 set = the key was let go */
+/* Bit 7 set means the key was released, not pressed. */
 #define SCANCODE_RELEASED 0x80
 
-// Keys we track by name instead of through the character tables.
+// Keys tracked by name instead of through the character tables.
 #define SCANCODE_LSHIFT 0x2A
 #define SCANCODE_RSHIFT 0x36
 #define SCANCODE_CAPSLOCK 0x3A
@@ -39,7 +26,7 @@
 #define SCANCODE_LEFT 0x4B
 #define SCANCODE_RIGHT 0x4D
 
-/* Keys we can hold ahead of the shell */
+/* Keys we can hold ahead of the shell. */
 #define KEY_BUFFER_SIZE 128
 
 static int shift_held = 0;
@@ -83,21 +70,21 @@ static const char shifted_map[128] = {
     0,                               // 0x3A
 };
 
-// Ring buffer of keys waiting for the shell: head = IRQ1's write side, tail =
-// the read side, count tells full from empty.
+// Ring buffer of keys waiting for the shell: head is IRQ1's write side, tail
+// the read side, and count tells full from empty.
 static int key_buffer[KEY_BUFFER_SIZE];
 static int key_buffer_head = 0;
 static int key_buffer_tail = 0;
 static int key_buffer_count = 0;
 
-/* Scancode -> ASCII character, KEY_* value (arrows), or 0 for bytes the
- * shell does not want. Remembers the 0xE0 prefix across interrupts. */
+/* Scancode -> character, KEY_* value, or 0 for bytes nobody wants. */
 static int translate(uint8_t scancode) {
     if (scancode == SCANCODE_EXTENDED) {
         extended_prefix = 1;
         return 0;
     }
 
+    // Extended keys arrive as a prefix byte followed by the real scancode.
     if (extended_prefix) {
         extended_prefix = 0;
         int released = (scancode & SCANCODE_RELEASED) != 0;
@@ -180,8 +167,7 @@ static int translate(uint8_t scancode) {
     return c != '\0' ? c : 0;
 }
 
-/* Store a key for keyboard_getchar(); IRQ1 context already has interrupts off.
- */
+/* Store a key for keyboard_getchar(); IRQ1 already has interrupts off. */
 static void buffer_push(int key) {
     if (key_buffer_count == KEY_BUFFER_SIZE) {
         return;  // the shell is not keeping up: drop the key
@@ -205,10 +191,10 @@ static void keyboard_irq(struct interrupt_frame* frame) {
     }
 }
 
+/* Start receiving keystrokes on IRQ1. */
 void keyboard_init(void) { interrupt_register_irq(1, keyboard_irq); }
 
-/* Take the oldest key out of the buffer, or 0 if there is none. Interrupts
- * are held off while the counters change, so IRQ1 cannot interrupt us. */
+/* Take the oldest key out of the buffer, or 0 if there is none. */
 static int buffer_pop(void) {
     interrupt_disable();
 

@@ -7,49 +7,26 @@
 #include "pmm.h"
 #include "spinlock.h"
 
-// The kernel heap: kmalloc() and kfree(), so the kernel no longer has
-// to size its data structures at compile time (the shell's fixed
-// history, the keyboard's fixed buffer, ...).
-//
-// The heap lives at HEAP_BASE in *virtual* space and grows upwards in
-// 4 KB steps. Each new page is a frame from the physical allocator,
-// mapped in by paging.c - so the heap occupies whatever physical pages
-// are free, not one contiguous stretch of RAM, which is the point of
-// having paging at all.
-//
-// Inside that growing region the allocator is the classic first-fit
-// free list: every block carries a header with its payload size and
-// whether it is free, blocks are split when an allocation would leave
-// a useful remainder behind, and kfree() merges neighbours so small
-// allocations do not fragment the heap permanently.
-//
-// The block list is shared, so every entry point holds heap_lock: a
-// second task - or an interrupt handler that allocates - would otherwise
-// walk the list while it is being split, and the two would corrupt it.
-
-/* Where the heap starts in virtual space: high up, well clear of the
- * kernel image at 1 MiB and of anything the identity map covers. */
+/* Where the heap starts in virtual space, clear of the image at 1 MiB. */
 #define HEAP_BASE 0xC0000000u
 
 /* How much virtual space one grow step adds. */
 #define HEAP_GROW_BYTES (16u * 1024u)
 
-/* A remainder smaller than this is not worth its own header: keep it
- * attached to the block instead of splitting. */
+/* A remainder smaller than this is not worth its own header. */
 #define HEAP_MIN_SPLIT 16u
 
 /* Payloads are handed out 8-byte aligned. */
 #define HEAP_ALIGNMENT 8u
 
-/* Every block starts with this. The padding field exists only to make
- * the header 16 bytes, which keeps the payload behind it 8-byte
- * aligned as long as the block itself is. */
+// The header is padded to 16 bytes, which keeps the payload behind it
+// 8-byte aligned as long as the block itself is.
+/* Every block starts with this. */
 struct heap_block {
-    /* bytes of payload, not counting this header */
-    uint32_t size;
-    uint32_t free;
-    struct heap_block* next;
-    uint32_t padding;
+    uint32_t size;            // bytes of payload, not counting this header
+    uint32_t free;            // 1 while the block is available
+    struct heap_block* next;  // next block in address order
+    uint32_t padding;         // keeps the header 16 bytes
 };
 
 /* Guards every field below, the block list above all. */
@@ -74,8 +51,7 @@ void kmalloc_init(void) {
     heap_mapped = 0;
 }
 
-/* Add "bytes" of fresh space to the heap: claim frames, map them, and
- * make the new stretch one free block. Returns 0 on success. */
+/* Add fresh space to the heap and make it one free block; 0 on success. */
 static int heap_grow(uint32_t bytes) {
     uint32_t want = align_up(bytes, HEAP_ALIGNMENT);
 
@@ -112,6 +88,8 @@ static int heap_grow(uint32_t bytes) {
         return 0;
     }
 
+    // The new stretch sits right after the last block, so it either joins
+    // that block when it is free or becomes the new tail.
     struct heap_block* tail = first_block;
     while (tail->next != 0) {
         tail = tail->next;
@@ -126,8 +104,7 @@ static int heap_grow(uint32_t bytes) {
     return 0;
 }
 
-/* First fit: cut a block of "need" bytes out of the list, or 0 when
- * nothing is big enough. Runs with the lock held. */
+/* First fit: cut a block of "need" bytes out of the list, or 0. */
 static void* take_block(uint32_t need) {
     for (struct heap_block* block = first_block; block != 0;
          block = block->next) {
@@ -166,6 +143,8 @@ void* kmalloc(size_t size) {
 
     spinlock_acquire(&heap_lock);
 
+    // Two attempts: the first may fail only because there is no block big
+    // enough, and growing the heap then makes room for a second try.
     for (int attempt = 0; attempt < 2; attempt++) {
         result = take_block(need);
 
@@ -196,11 +175,13 @@ void kfree(void* ptr) {
 
     block->free = 1;
 
+    // Merge forward while the next block is free too.
     while (block->next != 0 && block->next->free) {
         block->size += sizeof(struct heap_block) + block->next->size;
         block->next = block->next->next;
     }
 
+    // Then merge the block into a free predecessor, if there is one.
     struct heap_block* previous = first_block;
     while (previous != 0 && previous->next != block) {
         previous = previous->next;

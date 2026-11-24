@@ -4,25 +4,14 @@
 
 #include "io.h"
 
-// The PIC (Programmable Interrupt Controller) is a pair of 8259 chips
-// that turn 16 electrical IRQ lines into CPU interrupts. The original
-// IBM PC mapped them to 0x08-0x0F and 0x70-0x77, which collide with
-// CPU exceptions nowadays (0x08 is the double fault), so the first
-// thing we do is "remap" them to 0x20-0x2F: a keypress arrives as
-// interrupt 0x21 (IRQ1), a timer tick as 0x20 (IRQ0).
-//
-// The two chips are programmed through these ports:
-//
-//   0x20 / 0x21 - master chip, handles IRQ0-IRQ7
-//   0xA0 / 0xA1 - slave chip, handles IRQ8-IRQ15, and feeds into
-//                 IRQ2 of the master
+// The two 8259 chips: master handles IRQ0-IRQ7, slave handles IRQ8-IRQ15 and
+// feeds the master through IRQ2.
+#define PIC_MASTER_COMMAND 0x20  // master: command and status
+#define PIC_MASTER_DATA 0x21     // master: interrupt mask
+#define PIC_SLAVE_COMMAND 0xA0   // slave: command and status
+#define PIC_SLAVE_DATA 0xA1      // slave: interrupt mask
 
-#define PIC_MASTER_COMMAND 0x20
-#define PIC_MASTER_DATA 0x21
-#define PIC_SLAVE_COMMAND 0xA0
-#define PIC_SLAVE_DATA 0xA1
-
-#define PIC_EOI 0x20
+#define PIC_EOI 0x20  // end-of-interrupt command byte
 
 /* The slave PIC must be reachable through IRQ2 on the master. */
 #define PIC_SLAVE_IRQ 0x04

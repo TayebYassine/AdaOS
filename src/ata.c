@@ -5,47 +5,35 @@
 #include "io.h"
 #include "libc.h"
 
-// The ATA driver: the primary IDE bus, PIO mode, polling.
-//
-// A disk is a stack of 512-byte sectors addressed by number (LBA). The
-// controller has a handful of ports: a command port, a status port, and
-// a 16-bit data port that moves one word per read or write. A command
-// names the starting sector and how many sectors follow; the drive then
-// raises DRQ once per sector, and the CPU copies 256 words through the
-// data port. Nothing here uses interrupts: the drive is asked to stay
-// quiet (nIEN) and we wait on its status bits instead, so the driver
-// works before the IDT is set up.
-//
-// Every wait has a timeout, so a missing or wedged drive fails with 0
-// instead of hanging the kernel.
+// Ports of the primary IDE bus, one register each. The drive is polled, not
+// interrupted: nIEN keeps IRQ14 quiet, so the driver works before the IDT does
+// and every wait is bounded.
+#define ATA_DATA 0x1F0          // 16-bit data port, one word per transfer
+#define ATA_ERROR 0x1F1         // error register, read after a failure
+#define ATA_SECTOR_COUNT 0x1F2  // sectors this command moves
+#define ATA_LBA_LOW 0x1F3       // LBA bits 0-7
+#define ATA_LBA_MID 0x1F4       // LBA bits 8-15
+#define ATA_LBA_HIGH 0x1F5      // LBA bits 16-23
+#define ATA_DRIVE_HEAD 0x1F6    // drive select and LBA bits 24-27
+#define ATA_STATUS 0x1F7        // status when read
+#define ATA_COMMAND 0x1F7       // command when written
+#define ATA_CONTROL 0x3F6       // device control register
 
-// Ports of the primary IDE bus
-#define ATA_DATA 0x1F0
-#define ATA_ERROR 0x1F1
-#define ATA_SECTOR_COUNT 0x1F2
-#define ATA_LBA_LOW 0x1F3
-#define ATA_LBA_MID 0x1F4
-#define ATA_LBA_HIGH 0x1F5
-#define ATA_DRIVE_HEAD 0x1F6
-#define ATA_STATUS 0x1F7
-#define ATA_COMMAND 0x1F7
-#define ATA_CONTROL 0x3F6
+// Status register bits.
+#define ATA_STATUS_ERR 0x01   // the last command failed
+#define ATA_STATUS_DRQ 0x08   // a sector is ready through the data port
+#define ATA_STATUS_DF 0x20    // device fault
+#define ATA_STATUS_DRDY 0x40  // the drive is ready
+#define ATA_STATUS_BSY 0x80   // the drive is busy with a command
 
-// Status bits
-#define ATA_STATUS_ERR 0x01
-#define ATA_STATUS_DRQ 0x08
-#define ATA_STATUS_DF 0x20
-#define ATA_STATUS_DRDY 0x40
-#define ATA_STATUS_BSY 0x80
+// Command register values.
+#define ATA_CMD_READ 0x20      // read sectors with retries
+#define ATA_CMD_WRITE 0x30     // write sectors with retries
+#define ATA_CMD_FLUSH 0xE7     // flush the drive's write cache
+#define ATA_CMD_IDENTIFY 0xEC  // report the drive's parameters
 
-// Commands
-#define ATA_CMD_READ 0x20
-#define ATA_CMD_WRITE 0x30
-#define ATA_CMD_FLUSH 0xE7
-#define ATA_CMD_IDENTIFY 0xEC
-
-/* Master drive: bit 6 of the head register asks for sector addressing, so
- * the cylinder and head bits are replaced by the top LBA bits. */
+/* Master drive with LBA addressing: bit 6 replaces the head bits with the
+ * top LBA bits. */
 #define ATA_DRIVE_LBA 0xE0
 /* The same drive with the head register left in its plain form. */
 #define ATA_DRIVE_MASTER 0xA0
@@ -111,7 +99,7 @@ static int ata_select(uint32_t lba) {
     return ata_wait_idle();
 }
 
-/* Move one sector between the data port and memory, 256 words. */
+/* Move one sector from the data port into memory, 256 words. */
 static void ata_read_words(uint16_t* buffer, uint32_t words) {
     __asm__ volatile("rep insw"
                      : "+D"(buffer), "+c"(words)
@@ -119,6 +107,7 @@ static void ata_read_words(uint16_t* buffer, uint32_t words) {
                      : "memory");
 }
 
+/* Move one sector from memory out through the data port, 256 words. */
 static void ata_write_words(const uint16_t* buffer, uint32_t words) {
     __asm__ volatile("rep outsw"
                      : "+S"(buffer), "+c"(words)
@@ -161,6 +150,7 @@ static int ata_identify(void) {
     outb(ATA_DRIVE_HEAD, ATA_DRIVE_MASTER);
     ata_delay();
 
+    // A status of 0 means there is no drive at all on the bus.
     if (inb(ATA_STATUS) == 0) {
         return 0;
     }
@@ -177,6 +167,7 @@ static int ata_identify(void) {
 
     ata_read_words(info, 256);
 
+    // Word 49 bit 9: the drive can address sectors by LBA.
     if ((info[49] & 0x0200) == 0) {
         return 0;
     }
@@ -186,6 +177,7 @@ static int ata_identify(void) {
         return 0;
     }
 
+    // The model name is 40 characters, packed two per 16-bit word.
     for (int i = 0; i < 40; i++) {
         uint16_t word = info[27 + i / 2];
 
@@ -201,6 +193,7 @@ static int ata_identify(void) {
     return 1;
 }
 
+/* Find the first disk on the primary bus; 1 if one answered. */
 int ata_init(void) {
     present = 0;
     sectors = 0;
@@ -211,12 +204,16 @@ int ata_init(void) {
     return present;
 }
 
+/* Did a disk answer at boot? */
 int ata_present(void) { return present; }
 
+/* Sectors the disk has, 0 when there is none. */
 uint32_t ata_sector_count(void) { return sectors; }
 
+/* The model name the drive reported. */
 const char* ata_model(void) { return model; }
 
+/* Read "count" sectors starting at "lba" into "buffer"; 1 on success. */
 int ata_read(uint32_t lba, void* buffer, uint32_t count) {
     uint8_t* out = (uint8_t*)buffer;
 
@@ -224,6 +221,7 @@ int ata_read(uint32_t lba, void* buffer, uint32_t count) {
         return 0;
     }
 
+    // The count register holds at most 256 sectors, so long runs go in chunks.
     while (count > 0) {
         uint32_t chunk = count > ATA_MAX_CHUNK ? ATA_MAX_CHUNK : count;
 
@@ -247,6 +245,7 @@ int ata_read(uint32_t lba, void* buffer, uint32_t count) {
     return 1;
 }
 
+/* Write "count" sectors from "buffer" starting at "lba"; 1 on success. */
 int ata_write(uint32_t lba, const void* buffer, uint32_t count) {
     const uint8_t* in = (const uint8_t*)buffer;
 

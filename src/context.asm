@@ -1,14 +1,6 @@
-; context_switch(new_esp): the last step of a task switch.
-;
-; A switch happens inside the timer interrupt, where isr.asm has
-; already pushed a complete register frame on the interrupted task's
-; stack (layout in interrupt.h: gs first, eflags last). The scheduler
-; saved the address of that frame as the task's stack pointer, so
-; "resuming" a task is nothing more than making its frame the current
-; stack and popping what the interrupt stub would have popped.
-;
-; This never returns to its caller: the "call" that brought us here
-; belonged to the old task's stack, which is gone the moment esp moves.
+; context_switch(new_esp): the last step of a task switch. The frame
+; isr.asm built sits on the target task's stack, so resuming it means
+; adopting that stack and undoing the stub. Never returns to its caller.
 
 section .text
 

@@ -4,7 +4,9 @@
 
 <h1 align="center">AdaOS</h1>
 
-AdaOS is a tiny command-line operating system for 32-bit x86, written in C and Assembly. It boots through GRUB and drops you into a DOS-style shell.
+**AdaOS** is a tiny command-line operating system for 32-bit x86, written in C and Assembly. It boots through GRUB and drops you into a DOS-style shell.
+
+This operating system has most of the important features, such as file management for reading and writing files, and a custom executable script called **AdaScript**. You can play games too!
 
 <p align="center">
   <img src="./shell.gif" alt="Shell of AdaOS">

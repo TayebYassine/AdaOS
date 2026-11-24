@@ -8,25 +8,7 @@
 #include "kprintf.h"
 #include "libc.h"
 
-// The disk file system: the tree in fs.c written out to the first ATA
-// disk, and read back at boot.
-//
-// Layout, with one sector = 512 bytes:
-//
-//   sector 0        the superblock: magic, version, sizes, entry count
-//   sectors 1..32   the entry table: 128 entries of 128 bytes each
-//   sectors 33..    file data, back to back, in table order
-//
-// An entry is a full path plus the file's size and first sector, so the
-// disk needs no directory blocks: a path is its own address, and the
-// table holds the whole namespace at once. Directories get entries too,
-// which keeps empty ones around.
-//
-// Saving rewrites everything. The tree is small; writing it whole means
-// no free list, no fragmentation, and no partial updates to reason
-// about.
-
-#define DISKFS_MAGIC "ADAOSFS1"
+#define DISKFS_MAGIC "ADAOSFS1"  // eight bytes, no terminator on disk
 #define DISKFS_VERSION 1
 
 /* Entries the table holds, and the longest path one can name. */
@@ -34,28 +16,28 @@
 #define DISKFS_PATH_MAX 112
 
 /* Bits in an entry's flags. */
-#define DISKFS_USED 0x01
-#define DISKFS_DIR 0x02
+#define DISKFS_USED 0x01  // the slot describes something
+#define DISKFS_DIR 0x02   // it is a directory, not a file
 
-/* Everything about the disk in one sector. */
+/* Everything about the disk, kept in sector 0. */
 struct diskfs_super {
     char magic[8];
     uint32_t version;
     uint32_t sectors;
-    uint32_t entry_start;
-    uint32_t entry_sectors;
-    uint32_t data_start;
-    uint32_t entry_count;
-    uint32_t entry_capacity;
+    uint32_t entry_start;     // first sector of the table
+    uint32_t entry_sectors;   // sectors the table occupies
+    uint32_t data_start;      // first sector of the file data
+    uint32_t entry_count;     // entries in use
+    uint32_t entry_capacity;  // entries the table can hold
     uint8_t pad[476];
 } __attribute__((packed));
 
 /* One file or directory on the disk. */
 struct diskfs_entry {
-    char path[DISKFS_PATH_MAX];
-    uint32_t size;
-    uint32_t sector;
-    uint32_t flags;
+    char path[DISKFS_PATH_MAX];  // absolute path, for files and directories
+    uint32_t size;               // bytes of file data
+    uint32_t sector;             // first sector of the data
+    uint32_t flags;              // DISKFS_USED | DISKFS_DIR
     uint32_t pad;
 } __attribute__((packed));
 
@@ -78,6 +60,8 @@ static uint32_t saved_entries = 0;
 static uint32_t used_sectors = 0;
 static uint32_t planned = 0;
 
+// Progress is reported as a percentage of the phase currently running: the
+// hook is handed progress_base plus a share of progress_span.
 static void (*progress_hook)(int percent) = 0;
 static int progress_base = 0;
 static int progress_span = 100;
@@ -271,6 +255,7 @@ static int load_entry(const struct diskfs_entry* entry) {
     memcpy(path, entry->path, DISKFS_PATH_MAX);
     path[DISKFS_PATH_MAX - 1] = '\0';
 
+    // A path that is not absolute would land somewhere unexpected.
     if (path[0] != '/') {
         return 0;
     }
@@ -347,8 +332,7 @@ static int diskfs_load(void) {
     return 1;
 }
 
-/* Write a table with no entries in it, one sector at a time so a progress
- * hook can follow along. */
+/* Write a table with no entries in it, a sector at a time. */
 static int write_empty_table(void) {
     memset(table, 0, sizeof(table));
 
@@ -378,6 +362,7 @@ static int diskfs_format(void) {
     return 1;
 }
 
+/* Look at the first disk and remember whether it holds a file system. */
 int diskfs_probe(void) {
     if (probed) {
         return present;
@@ -404,8 +389,10 @@ int diskfs_probe(void) {
     return 1;
 }
 
+/* Is there a disk, but no file system on it yet? */
 int diskfs_blank(void) { return present && blank; }
 
+/* Format the disk, and write the memory tree out when "files" is set. */
 int diskfs_format_disk(int files, void (*progress)(int percent)) {
     if (!diskfs_probe()) {
         return 0;
@@ -427,6 +414,7 @@ int diskfs_format_disk(int files, void (*progress)(int percent)) {
     }
 
     if (files) {
+        // The table is written; the file data takes the rest of the bar.
         progress_base = 10;
         progress_span = 89;
 
@@ -452,6 +440,7 @@ int diskfs_format_disk(int files, void (*progress)(int percent)) {
     return 1;
 }
 
+/* Write the whole tree out, reporting progress. */
 int diskfs_write_tree(void (*progress)(int percent)) {
     if (!present) {
         return 0;
@@ -481,6 +470,7 @@ int diskfs_write_tree(void (*progress)(int percent)) {
     return 1;
 }
 
+/* Mount the disk file system, formatting the disk when it has none. */
 int diskfs_init(void) {
     if (!diskfs_probe()) {
         return 0;
@@ -503,6 +493,7 @@ int diskfs_init(void) {
     return 1;
 }
 
+/* Write the tree out if it changed since the last save. */
 int diskfs_sync(void) {
     if (!present) {
         return 0;
@@ -521,6 +512,7 @@ int diskfs_sync(void) {
     return 1;
 }
 
+/* Is a disk behind the file system? */
 int diskfs_present(void) { return present; }
 
 uint32_t diskfs_total_sectors(void) { return ata_sector_count(); }

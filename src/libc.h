@@ -4,6 +4,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// String, memory and number helpers the C library would normally provide. The
+// kernel is freestanding (-fno-builtin, nothing linked behind it), so the
+// usual strlen/strcmp/strcpy family, memcpy/memmove/memset, the two character
+// case helpers and decimal conversions live here. None of them allocate, and
+// the ones taking buffers trust the caller to have sized them.
+
 /* Length of a string, not counting the ending '\0'. */
 size_t strlen(const char* s);
 

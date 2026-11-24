@@ -17,13 +17,11 @@
 #include "shell.h"
 #include "timer.h"
 
-// Kernel entry point: brings up the CPU tables (GDT, IDT), the
-// interrupt controller, the memory layers (physical pages, paging, the
-// heap), the file system and the disk behind it, the drivers, the wall
-// clock and the scheduler, which then enters the shell.
-// Called once by boot.asm's _start.
+// Kernel entry point: bring up the CPU tables and the interrupt controller,
+// then the memory layers (frames, paging, heap), the file system and its disk,
+// the drivers, the clock and the scheduler, which ends up in the shell.
 
-/* Entry point of AdaOS. */
+/* Entry point of the kernel; called once by boot.asm's _start. */
 void kernel_main(uint32_t magic, uint32_t info_addr) {
     interrupt_disable();
 

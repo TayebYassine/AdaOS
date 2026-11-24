@@ -8,41 +8,27 @@
 #include "screen.h"
 #include "timer.h"
 
-// Snake game for AdaOS.
-//
-// The screen is split into three parts:
-//   row 0         top bar: "Score: <score>" on the left, time in MM:SS on the
-//   right rows 1-23     the playing field (with wrap-around mirror borders) row
-//   24        bottom bar: "^E exit   ^R restart"
-//
-// The snake moves forward every 0.25 seconds in the current direction
-// (controlled by arrow keys). It starts at length 3 moving east. Eating an
-// apple (red) gives 5 score and grows the snake by 1; the next apple spawns
-// at a random position 3 seconds after the previous one was eaten.
-//
-// Reaching 100 score displays a blue "You Win!" box. Running into the snake's
-// body displays a blue "You Lost!" box.
-
-// Playing field bounds
+// Playing field: every row below the top bar and above the bottom bar, and
+// the full width. Leaving an edge wraps around to the opposite one.
 #define FIELD_ROW_MIN 1
 #define FIELD_ROW_MAX (SCREEN_ROWS - 2)
 #define FIELD_ROWS (FIELD_ROW_MAX - FIELD_ROW_MIN + 1)
 #define FIELD_COLS SCREEN_COLS
 
-// Timing in PIT ticks (100 ticks = 1 second)
-#define STEP_TICKS 25
-#define APPLE_DELAY_TICKS 300
+// Timing in PIT ticks (100 ticks = 1 second).
+#define STEP_TICKS 25          // 0.25 s between moves
+#define APPLE_DELAY_TICKS 300  // 3 s before the next apple appears
 
-/* VGA colors */
+/* VGA colours. */
 #define COLOR_BAR 0x70
 #define COLOR_HEAD 0x02
 #define COLOR_BODY 0x0A
 #define COLOR_APPLE 0x0C
 #define COLOR_EMPTY 0x07
-#define COLOR_DIALOG 0x1F
-#define CHAR_BLOCK ((char)0xDB)
+#define COLOR_DIALOG 0x1F        // white on blue, for the end-of-game box
+#define CHAR_BLOCK ((char)0xDB)  // CP437 full block, one snake cell
 
-#define MAX_SNAKE_LENGTH 2000
+#define MAX_SNAKE_LENGTH 2000  // cells one snake can occupy
 
 struct point {
     int row;
@@ -304,6 +290,7 @@ static void step_snake(void) {
     }
 }
 
+/* Play until Ctrl+E, then give the screen back to the shell. */
 void snake_run(void) {
     screen_save(saved_cells, &saved_row, &saved_col);
     clock_pause();

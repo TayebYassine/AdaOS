@@ -4,16 +4,17 @@
 
 #include "io.h"
 
-// Leaving the machine: powering it off, or starting it over. Both are
-// done by talking to a chip, and neither ever comes back, so they live
-// here instead of in the shell command that asks for them - the setup
-// program needs exactly the same two things.
-
-/* Power off the machine through the ACPI "S5" (soft off) state. */
-void power_shutdown(void) {
+// Soft-off is one 16-bit write to the ACPI power-management port, but the
+// port differs between chipsets, so every known one is tried in turn.
+static void acpi_power_off(void) {
     outw(0x604, 0x2000);   // QEMU / KVM
     outw(0xB004, 0x2000);  // Bochs / older QEMU
     outw(0x4004, 0x3400);  // VirtualBox
+}
+
+/* Power off the machine through the ACPI "S5" (soft off) state. */
+void power_shutdown(void) {
+    acpi_power_off();
 
     for (;;) {
         __asm__ volatile("hlt");
@@ -22,12 +23,15 @@ void power_shutdown(void) {
 
 /* Restart the machine. */
 void power_reboot(void) {
+    // Wait for the keyboard controller's input buffer to empty before the
+    // reset command, or the chip may ignore it.
     while ((inb(0x64) & 0x02) != 0) {
     }
 
-    outb(0x64, 0xFE);
+    outb(0x64, 0xFE);  // pulse the controller's reset line
 
-    // The controller ignored us: force a triple fault instead.
+    // The controller ignored us: load an empty IDT and trigger an
+    // interrupt, and the resulting triple fault resets the CPU.
     struct {
         uint16_t limit;
         uint32_t base;

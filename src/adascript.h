@@ -1,12 +1,19 @@
 #ifndef ADAOS_ADASCRIPT_H
 #define ADAOS_ADASCRIPT_H
 
-/* Run an AdaScript file (.as) at the given filesystem path.
- * Returns 0 on success, or non-zero on error. */
+// AdaScript: a small interpreted language run by the shell. A script is a text
+// file of one statement per line; variable definitions with optional types,
+// assignments, print, input, if/else blocks, for and while loops, and system
+// commands. The interpreter tokenizes each line, parses expressions with the
+// usual precedence, keeps variables in an environment with declared types, and
+// reports errors with the line and column where they happened. Values are
+// integers, strings, booleans, null and arrays. Running a script builds its own
+// environment, so scripts do not leak variables into each other.
+
+/* Run an AdaScript file (.as) at the given filesystem path; 0 on success. */
 int adascript_run_file(const char* path);
 
-/* Run an AdaScript passed as a null-terminated text string.
- * Returns 0 on success, or non-zero on error. */
+/* Run an AdaScript passed as a null-terminated text string; 0 on success. */
 int adascript_run_string(const char* script);
 
 #endif /* ADAOS_ADASCRIPT_H */
