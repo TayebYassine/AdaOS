@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./ada.png" alt="AdaOS logo" width="128" />
+  <img src="./assets//ada.png" alt="AdaOS logo" width="128" />
 </p>
 
 <h1 align="center">AdaOS</h1>
@@ -7,10 +7,6 @@
 **AdaOS** is a tiny command-line operating system for 32-bit x86, written in C and Assembly. It boots through GRUB and drops you into a DOS-style shell.
 
 This operating system has most of the important features, such as file management for reading and writing files, and a custom executable script called **AdaScript**. You can play games too!
-
-<p align="center">
-  <img src="./shell.gif" alt="Shell of AdaOS">
-</p>
 
 > [!CAUTION]
 > AdaOS is still experimental and may have bugs. Please report if you encounter any.
@@ -22,11 +18,15 @@ This operating system has most of the important features, such as file managemen
 - **DOS-style shell**: An 80x25 text shell that parses command lines, runs the built-in commands and documents them through `help`.
 - **File system on disk**: A hierarchical tree of files and directories stored on the first IDE disk through the ATA driver, with `ls`, `cd`, `cat`, `mkdir`, `cp`, `mv`, `rm` and `find`. Without a disk the tree lives in RAM for the session.
 - **Full-screen text editor**: `write <file>` opens an editor with a status line and cursor movement.
-- **Games**: `snake` runs a playable snake game on the text-mode screen.
+- **Games**: `snake` runs a playable snake game, and `tetris` runs a playable tetris game on the text-mode screen.
 - **Memory management**: Physical page allocator, paging, and a kernel heap, summarised by `mem`.
 - **Multitasking**: A preemptive scheduler with kernel tasks, listed by `tasks`.
 - **Date and time**: The CMOS real-time clock, settable with `setdate` and `settime`, plus `time`, `cal` and `uptime`.
 - **Text-mode UI**: 80x25 VGA output, CP437 box-drawing glyphs, PS/2 keyboard input and serial logging.
+
+## View
+
+
 
 ## Requirements
 
