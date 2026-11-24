@@ -15,6 +15,9 @@
 #define AS_NAME_MAX 32
 #define AS_LINE_MAX 256
 #define AS_ARRAY_MAX 256
+#define AS_MAX_RUN_DEPTH 8
+
+static int as_run_depth = 0;
 
 /* AdaScript data types. */
 enum as_type {
@@ -63,6 +66,7 @@ struct as_env {
     int exit_flag;
     int break_flag;
     int continue_flag;
+    int loop_depth;
 };
 
 /* One parsed line in the script. */
@@ -75,11 +79,14 @@ struct as_line {
 /* Forward declarations. */
 static void as_value_free(struct as_value* val);
 static void as_value_copy(struct as_value* dst, const struct as_value* src);
+static void as_value_copy_raw(struct as_value* dst, const struct as_value* src);
 static void as_value_format(const struct as_value* val, char* buf, int max,
                             int quote_strings);
+static void as_copy_text(char* buf, const char* src, int max);
 static int as_value_to_i32(const struct as_value* val);
 static uint32_t as_value_to_u32(const struct as_value* val);
 static int as_value_is_truthy(const struct as_value* val);
+static int as_value_to_bool(const struct as_value* val);
 static void as_value_cast_assign(struct as_value* dst,
                                  const struct as_value* src);
 static struct as_value as_eval_expression(struct as_env* env, const char* str);
@@ -155,31 +162,45 @@ static void as_value_free(struct as_value* val) {
     }
 }
 
-/* Deep-copy a value from src to dst. */
-static void as_value_copy(struct as_value* dst, const struct as_value* src) {
+/* Deep-copy a value into storage that owns nothing yet.
+ * Never frees dst: the caller guarantees dst holds no live memory. */
+static void as_value_copy_raw(struct as_value* dst,
+                              const struct as_value* src) {
     dst->type = src->type;
     dst->elem_type = src->elem_type;
     dst->is_null = src->is_null;
 
     if (src->type == AS_TYPE_STRING) {
         dst->u.str = src->u.str ? as_strdup(src->u.str) : 0;
+        if (src->u.str != 0 && dst->u.str == 0) {
+            dst->is_null = 1;
+        }
     } else if (src->type == AS_TYPE_ARRAY) {
-        dst->u.arr.count = src->u.arr.count;
-        dst->u.arr.capacity = src->u.arr.count;
+        dst->u.arr.items = 0;
+        dst->u.arr.count = 0;
+        dst->u.arr.capacity = 0;
         if (src->u.arr.count > 0) {
-            dst->u.arr.items = (struct as_value*)kmalloc(
+            struct as_value* items = (struct as_value*)kmalloc(
                 src->u.arr.count * sizeof(struct as_value));
-            if (dst->u.arr.items != 0) {
-                for (int i = 0; i < src->u.arr.count; i++) {
-                    as_value_copy(&dst->u.arr.items[i], &src->u.arr.items[i]);
-                }
+            if (items == 0) {
+                return;
             }
-        } else {
-            dst->u.arr.items = 0;
+            for (int i = 0; i < src->u.arr.count; i++) {
+                as_value_copy_raw(&items[i], &src->u.arr.items[i]);
+            }
+            dst->u.arr.items = items;
+            dst->u.arr.count = src->u.arr.count;
+            dst->u.arr.capacity = src->u.arr.count;
         }
     } else {
         dst->u = src->u;
     }
+}
+
+/* Deep-copy a value from src to dst, releasing whatever dst held before. */
+static void as_value_copy(struct as_value* dst, const struct as_value* src) {
+    as_value_free(dst);
+    as_value_copy_raw(dst, src);
 }
 
 /* Append an item to an array. */
@@ -301,11 +322,66 @@ static int as_value_is_truthy(const struct as_value* val) {
     }
 }
 
+/* Case-insensitive string comparison, for the words a bool accepts. */
+static int as_str_equals_ci(const char* a, const char* b) {
+    int i = 0;
+
+    while (a[i] != '\0' && b[i] != '\0') {
+        if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) {
+            return 0;
+        }
+        i++;
+    }
+
+    return a[i] == b[i];
+}
+
+/* Convert a value to a boolean. Text is understood, so
+ * `define f: bool = "false"` does what it reads like. */
+static int as_value_to_bool(const struct as_value* val) {
+    if (val->type == AS_TYPE_STRING && val->u.str != 0) {
+        const char* s = val->u.str;
+        size_t len = strlen(s);
+
+        if (len == 0) {
+            return 0;
+        }
+        if (as_str_equals_ci(s, "false") || as_str_equals_ci(s, "no") ||
+            strcmp(s, "0") == 0) {
+            return 0;
+        }
+        if (as_str_equals_ci(s, "true") || as_str_equals_ci(s, "yes") ||
+            strcmp(s, "1") == 0) {
+            return 1;
+        }
+    }
+
+    return as_value_is_truthy(val);
+}
+
+/* Copy at most max-1 bytes of src into buf and always terminate it. */
+static void as_copy_text(char* buf, const char* src, int max) {
+    int i = 0;
+
+    if (max <= 0) {
+        return;
+    }
+    while (src != 0 && src[i] != '\0' && i < max - 1) {
+        buf[i] = src[i];
+        i++;
+    }
+    buf[i] = '\0';
+}
+
 /* Format a value into a human-readable text string. */
 static void as_value_format(const struct as_value* val, char* buf, int max,
                             int quote_strings) {
+    if (max <= 0) {
+        return;
+    }
+
     if (val->is_null) {
-        strncpy(buf, "null", max);
+        as_copy_text(buf, "null", max);
         return;
     }
 
@@ -321,11 +397,11 @@ static void as_value_format(const struct as_value* val, char* buf, int max,
             utoa(val->u.u32, buf);
             break;
         case AS_TYPE_BOOL:
-            strncpy(buf, val->u.boolean ? "true" : "false", max);
+            as_copy_text(buf, val->u.boolean ? "true" : "false", max);
             break;
         case AS_TYPE_STRING: {
             if (val->u.str == 0) {
-                strncpy(buf, "null", max);
+                as_copy_text(buf, "null", max);
             } else if (quote_strings) {
                 int len = (int)strlen(val->u.str);
                 if (len + 3 < max) {
@@ -334,10 +410,10 @@ static void as_value_format(const struct as_value* val, char* buf, int max,
                     buf[len + 1] = '"';
                     buf[len + 2] = '\0';
                 } else {
-                    strncpy(buf, val->u.str, max);
+                    as_copy_text(buf, val->u.str, max);
                 }
             } else {
-                strncpy(buf, val->u.str, max);
+                as_copy_text(buf, val->u.str, max);
             }
             break;
         }
@@ -412,41 +488,49 @@ static void as_value_cast_assign(struct as_value* dst,
             dst->u.u32 = as_value_to_u32(src);
             break;
         case AS_TYPE_BOOL:
-            dst->u.boolean = as_value_is_truthy(src);
+            dst->u.boolean = as_value_to_bool(src);
             break;
         case AS_TYPE_STRING: {
             as_value_free(dst);
-            char buf[AS_LINE_MAX];
-            as_value_format(src, buf, sizeof(buf), 0);
-            dst->u.str = as_strdup(buf);
+            if (src->type == AS_TYPE_STRING) {
+                dst->u.str = src->u.str ? as_strdup(src->u.str) : 0;
+                dst->is_null = (src->u.str == 0);
+            } else {
+                char buf[AS_LINE_MAX];
+                as_value_format(src, buf, sizeof(buf), 0);
+                dst->u.str = as_strdup(buf);
+            }
             break;
         }
         case AS_TYPE_ARRAY: {
-            if (src->type == AS_TYPE_ARRAY) {
-                enum as_type target_elem = (dst->elem_type != AS_TYPE_VOID)
-                                               ? dst->elem_type
-                                               : src->elem_type;
-                as_value_free(dst);
-                dst->type = AS_TYPE_ARRAY;
-                dst->elem_type = target_elem;
-                dst->is_null = 0;
-                dst->u.arr.count = src->u.arr.count;
-                dst->u.arr.capacity = src->u.arr.count;
-                if (src->u.arr.count > 0) {
-                    dst->u.arr.items = (struct as_value*)kmalloc(
-                        src->u.arr.count * sizeof(struct as_value));
-                    if (dst->u.arr.items != 0) {
-                        for (int i = 0; i < src->u.arr.count; i++) {
-                            as_value_init(&dst->u.arr.items[i], target_elem,
-                                          AS_TYPE_VOID);
-                            as_value_cast_assign(&dst->u.arr.items[i],
-                                                 &src->u.arr.items[i]);
-                        }
-                    }
-                } else {
-                    dst->u.arr.items = 0;
+            if (src->type != AS_TYPE_ARRAY) {
+                break;
+            }
+
+            enum as_type target_elem = (dst->elem_type != AS_TYPE_VOID)
+                                           ? dst->elem_type
+                                           : src->elem_type;
+            struct as_value* items = 0;
+
+            if (src->u.arr.count > 0) {
+                items = (struct as_value*)kmalloc(src->u.arr.count *
+                                                  sizeof(struct as_value));
+                if (items == 0) {
+                    break;
+                }
+                for (int i = 0; i < src->u.arr.count; i++) {
+                    as_value_init(&items[i], target_elem, AS_TYPE_VOID);
+                    as_value_cast_assign(&items[i], &src->u.arr.items[i]);
                 }
             }
+
+            as_value_free(dst);
+            dst->type = AS_TYPE_ARRAY;
+            dst->elem_type = target_elem;
+            dst->is_null = 0;
+            dst->u.arr.items = items;
+            dst->u.arr.count = src->u.arr.count;
+            dst->u.arr.capacity = src->u.arr.count;
             break;
         }
         default:
@@ -464,11 +548,21 @@ static struct as_var* as_env_lookup(struct as_env* env, const char* name) {
     return 0;
 }
 
-/* Register a new variable in RAM. */
+/* Register a variable in RAM. Declaring a name that already exists
+ * re-initialises it with the new type, so a `define` inside a loop or an
+ * `if` body works the way a shell script expects instead of failing on the
+ * second pass. */
 static struct as_var* as_env_define(struct as_env* env, const char* name,
                                     enum as_type type, enum as_type elem_type) {
-    if (as_env_lookup(env, name) != 0) {
+    if (name[0] == '\0') {
         return 0;
+    }
+
+    struct as_var* existing = as_env_lookup(env, name);
+    if (existing != 0) {
+        as_value_free(&existing->val);
+        as_value_init(&existing->val, type, elem_type);
+        return existing;
     }
 
     struct as_var* var = (struct as_var*)kmalloc(sizeof(struct as_var));
@@ -604,7 +698,7 @@ enum as_tok_kind {
 struct as_token {
     enum as_tok_kind kind;
     int32_t int_val;
-    char text[64];
+    char text[AS_LINE_MAX];
 };
 
 struct as_lexer {
@@ -669,6 +763,12 @@ static void as_lexer_next(struct as_lexer* lex) {
         while (lex->src[lex->pos] != '\0' && lex->src[lex->pos] != '"') {
             char ch = lex->src[lex->pos++];
             if (ch == '\\') {
+                if (lex->src[lex->pos] == '\0') {
+                    if (idx < (int)sizeof(lex->cur.text) - 1) {
+                        lex->cur.text[idx++] = ch;
+                    }
+                    break;
+                }
                 char esc = lex->src[lex->pos++];
                 if (esc == 'n')
                     ch = '\n';
@@ -935,19 +1035,33 @@ static struct as_value as_parse_add(struct as_env* env, struct as_lexer* lex) {
             if (left.type == AS_TYPE_STRING || right.type == AS_TYPE_STRING) {
                 char b1[AS_LINE_MAX];
                 char b2[AS_LINE_MAX];
-                as_value_format(&left, b1, sizeof(b1), 0);
-                as_value_format(&right, b2, sizeof(b2), 0);
-                int l1 = (int)strlen(b1);
-                int l2 = (int)strlen(b2);
+                const char* s1;
+                const char* s2;
+
+                if (left.type == AS_TYPE_STRING && left.u.str != 0) {
+                    s1 = left.u.str;
+                } else {
+                    as_value_format(&left, b1, sizeof(b1), 0);
+                    s1 = b1;
+                }
+                if (right.type == AS_TYPE_STRING && right.u.str != 0) {
+                    s2 = right.u.str;
+                } else {
+                    as_value_format(&right, b2, sizeof(b2), 0);
+                    s2 = b2;
+                }
+
+                int l1 = (int)strlen(s1);
+                int l2 = (int)strlen(s2);
                 char* joined = (char*)kmalloc(l1 + l2 + 1);
                 if (joined != 0) {
-                    memcpy(joined, b1, l1);
-                    memcpy(joined + l1, b2, l2 + 1);
+                    memcpy(joined, s1, l1);
+                    memcpy(joined + l1, s2, l2 + 1);
                 }
                 as_value_free(&left);
                 as_value_free(&right);
                 left.type = AS_TYPE_STRING;
-                left.is_null = 0;
+                left.is_null = (joined == 0);
                 left.u.str = joined;
             } else {
                 int32_t sum = as_value_to_i32(&left) + as_value_to_i32(&right);
@@ -1191,6 +1305,21 @@ static struct as_value as_eval_expression(struct as_env* env, const char* str) {
     return as_parse_or(env, &lex);
 }
 
+/* Is the text at p the whole keyword kw, and not the start of a longer
+ * word? Keeps `if dot > 0 do` from being cut at the "do" in "dot". */
+static int as_word_is(const char* p, const char* kw) {
+    size_t len = strlen(kw);
+    char after;
+
+    if (strncmp(p, kw, len) != 0) {
+        return 0;
+    }
+
+    after = p[len];
+    return after == '\0' || after == ' ' || after == '\t' || after == ':' ||
+           after == ';';
+}
+
 /* Find the matching "done" (or "endif"/"fi") for a block. */
 static int as_find_matching_done(struct as_line* lines, int total, int start) {
     int depth = 1;
@@ -1266,7 +1395,7 @@ static void as_exec_system_cmd(struct as_env* env, const char* line) {
             continue;
         }
 
-        char word[64];
+        char word[AS_LINE_MAX];
         int w_len = 0;
         int has_dollar = (line[i] == '$');
         if (has_dollar) i++;
@@ -1279,9 +1408,9 @@ static void as_exec_system_cmd(struct as_env* env, const char* line) {
         }
         word[w_len] = '\0';
 
-        struct as_var* var = as_env_lookup(env, word);
+        struct as_var* var = has_dollar ? as_env_lookup(env, word) : 0;
         if (var != 0) {
-            char val_buf[64];
+            char val_buf[AS_LINE_MAX];
             as_value_format(&var->val, val_buf, sizeof(val_buf), 0);
             int v_len = (int)strlen(val_buf);
             if (exp_pos + v_len < (int)sizeof(expanded) - 1) {
@@ -1310,13 +1439,29 @@ static void as_exec_define(struct as_env* env, const char* stmt) {
 
     char name[AS_NAME_MAX];
     int n_len = 0;
+    int name_too_long = 0;
     while (*p != '\0' && *p != ':' && *p != ' ' && *p != '=') {
         if (n_len < (int)sizeof(name) - 1) {
             name[n_len++] = *p;
+        } else {
+            name_too_long = 1;
         }
         p++;
     }
     name[n_len] = '\0';
+
+    if (name[0] == '\0') {
+        print("Error: define needs a name.\n");
+        env->error = 1;
+        return;
+    }
+    if (name_too_long) {
+        kprintf(
+            "Error: variable name '%.*s...' is longer than %d characters.\n",
+            AS_NAME_MAX, name, AS_NAME_MAX - 1);
+        env->error = 1;
+        return;
+    }
 
     while (*p == ' ') p++;
     if (*p == ':') p++;
@@ -1342,7 +1487,7 @@ static void as_exec_define(struct as_env* env, const char* stmt) {
 
     struct as_var* var = as_env_define(env, name, type, elem_type);
     if (var == 0) {
-        kprintf("Error: variable '%s' already defined.\n", name);
+        kprintf("Error: cannot define variable '%s'.\n", name);
         env->error = 1;
         return;
     }
@@ -1362,7 +1507,12 @@ static void as_exec_define(struct as_env* env, const char* stmt) {
         }
 
         struct as_value val = as_eval_expression(env, expr_buf);
-        as_value_cast_assign(&var->val, &val);
+        if (var->val.type == AS_TYPE_ARRAY && val.type != AS_TYPE_ARRAY) {
+            kprintf("Error: '%s' is an array; give it { ... }.\n", name);
+            env->error = 1;
+        } else {
+            as_value_cast_assign(&var->val, &val);
+        }
         as_value_free(&val);
     }
 }
@@ -1403,23 +1553,33 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
         char arg_buf[AS_LINE_MAX];
         int a_len = 0;
         int in_quote = 0;
+        int escaped = 0;
         int paren_depth = 0;
 
-        while (*p != '\0' && *p != ';') {
-            if (*p == '"') {
+        while (*p != '\0') {
+            char c = *p;
+
+            if (escaped) {
+                escaped = 0;
+            } else if (in_quote && c == '\\') {
+                escaped = 1;
+            } else if (c == '"') {
                 in_quote = !in_quote;
             } else if (!in_quote) {
-                if (*p == '(' || *p == '{' || *p == '[')
+                if (c == '(' || c == '{' || c == '[') {
                     paren_depth++;
-                else if (*p == ')' || *p == '}' || *p == ']')
+                } else if (c == ')' || c == '}' || c == ']') {
                     paren_depth--;
-                else if (*p == ',' && paren_depth == 0) {
-                    p++;
+                } else if (paren_depth == 0 && (c == ',' || c == ';')) {
+                    if (c == ',') {
+                        p++;
+                    }
                     break;
                 }
             }
+
             if (a_len < (int)sizeof(arg_buf) - 1) {
-                arg_buf[a_len++] = *p;
+                arg_buf[a_len++] = c;
             }
             p++;
         }
@@ -1440,8 +1600,12 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
 
         struct as_value val = as_eval_expression(env, a_start);
         char out_buf[AS_LINE_MAX];
-        as_value_format(&val, out_buf, sizeof(out_buf), 0);
-        print(out_buf);
+        if (val.type == AS_TYPE_STRING && val.u.str != 0) {
+            print(val.u.str);
+        } else {
+            as_value_format(&val, out_buf, sizeof(out_buf), 0);
+            print(out_buf);
+        }
         as_value_free(&val);
 
         while (*p == ' ') p++;
@@ -1508,7 +1672,7 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
     const char* eq = strchr(stmt, '=');
     if (eq == 0) return;
 
-    char lhs[64];
+    char lhs[AS_LINE_MAX];
     int l_len = (int)(eq - stmt);
     if (l_len >= (int)sizeof(lhs)) l_len = (int)sizeof(lhs) - 1;
     memcpy(lhs, stmt, l_len);
@@ -1541,6 +1705,13 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
         char* rbrack = strchr(lbrack + 1, ']');
         if (rbrack != 0) *rbrack = '\0';
 
+        if ((int)strlen(l_start) >= AS_NAME_MAX) {
+            kprintf("Error: variable name '%s' is too long.\n", l_start);
+            env->error = 1;
+            as_value_free(&val);
+            return;
+        }
+
         struct as_var* var = as_env_lookup(env, l_start);
         if (var == 0) {
             kprintf("Error: variable '%s' not found.\n", l_start);
@@ -1569,13 +1740,25 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
 
         as_value_cast_assign(&var->val.u.arr.items[idx], &val);
     } else {
+        if ((int)strlen(l_start) >= AS_NAME_MAX) {
+            kprintf("Error: variable name '%s' is too long.\n", l_start);
+            env->error = 1;
+            as_value_free(&val);
+            return;
+        }
+
         struct as_var* var = as_env_lookup(env, l_start);
         if (var == 0) {
-            /* Auto-define variable if not defined yet. */
             var = as_env_define(env, l_start, val.type, val.elem_type);
         }
         if (var != 0) {
-            as_value_cast_assign(&var->val, &val);
+            if (var->val.type == AS_TYPE_ARRAY && val.type != AS_TYPE_ARRAY) {
+                kprintf("Error: '%s' is an array; assign { ... } instead.\n",
+                        l_start);
+                env->error = 1;
+            } else {
+                as_value_cast_assign(&var->val, &val);
+            }
         }
     }
 
@@ -1600,10 +1783,22 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
         }
 
         if (strcmp(stmt, "break") == 0 || strcmp(stmt, "break;") == 0) {
+            if (env->loop_depth == 0) {
+                print("Error: 'break' outside a loop.\n");
+                env->error = 1;
+                i++;
+                continue;
+            }
             env->break_flag = 1;
             return 0;
         }
         if (strcmp(stmt, "continue") == 0 || strcmp(stmt, "continue;") == 0) {
+            if (env->loop_depth == 0) {
+                print("Error: 'continue' outside a loop.\n");
+                env->error = 1;
+                i++;
+                continue;
+            }
             env->continue_flag = 1;
             return 0;
         }
@@ -1660,11 +1855,14 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
             }
             var_name[vn_len] = '\0';
             while (*fp == ' ') fp++;
-
-            if (strncmp(fp, "in ", 3) == 0) {
-                /* Array iteration loop. */
-                fp += 3;
+            if (*fp == ':') {
+                fp++;
                 while (*fp == ' ') fp++;
+            }
+
+            if (as_word_is(fp, "in")) {
+                fp += 2;
+                while (*fp == ' ' || *fp == ':') fp++;
 
                 char arr_name[AS_NAME_MAX];
                 int an_len = 0;
@@ -1692,7 +1890,14 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                 }
 
                 int total_elems = arr_var->val.u.arr.count;
+                env->loop_depth++;
                 for (int k = 0; k < total_elems; k++) {
+                    if (arr_var->val.type != AS_TYPE_ARRAY ||
+                        arr_var->val.u.arr.items == 0 ||
+                        k >= arr_var->val.u.arr.count) {
+                        break;
+                    }
+
                     as_value_copy(&iter_var->val, &arr_var->val.u.arr.items[k]);
                     as_exec_block(env, lines, i + 1, done_line - 1);
 
@@ -1703,6 +1908,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                     }
                     env->continue_flag = 0;
                 }
+                env->loop_depth--;
 
                 i = done_line + 1;
                 continue;
@@ -1713,12 +1919,18 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                                              AS_TYPE_VOID);
                 }
 
-                if (strncmp(fp, "from ", 5) == 0) {
-                    fp += 5;
-                    while (*fp == ' ') fp++;
-                    char start_expr[64];
+                char start_expr[AS_LINE_MAX];
+                char end_expr[AS_LINE_MAX];
+                char step_expr[AS_LINE_MAX];
+                start_expr[0] = '\0';
+                end_expr[0] = '\0';
+                step_expr[0] = '\0';
+
+                if (as_word_is(fp, "from")) {
+                    fp += 4;
+                    while (*fp == ' ' || *fp == ':') fp++;
                     int s_len = 0;
-                    while (*fp != '\0' && strncmp(fp, "to ", 3) != 0) {
+                    while (*fp != '\0' && !as_word_is(fp, "to")) {
                         if (s_len < (int)sizeof(start_expr) - 1) {
                             start_expr[s_len++] = *fp;
                         }
@@ -1730,15 +1942,14 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                     as_value_free(&s_val);
                 }
 
-                if (strncmp(fp, "to ", 3) == 0) {
-                    fp += 3;
-                    while (*fp == ' ') fp++;
+                if (as_word_is(fp, "to")) {
+                    fp += 2;
+                    while (*fp == ' ' || *fp == ':') fp++;
                 }
 
-                char end_expr[64];
                 int e_len = 0;
-                while (*fp != '\0' && strncmp(fp, "step ", 5) != 0 &&
-                       strncmp(fp, "do", 2) != 0) {
+                while (*fp != '\0' && !as_word_is(fp, "step") &&
+                       !as_word_is(fp, "do")) {
                     if (e_len < (int)sizeof(end_expr) - 1) {
                         end_expr[e_len++] = *fp;
                     }
@@ -1747,12 +1958,11 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                 end_expr[e_len] = '\0';
 
                 int step = 1;
-                if (strncmp(fp, "step ", 5) == 0) {
-                    fp += 5;
-                    while (*fp == ' ') fp++;
-                    char step_expr[64];
+                if (as_word_is(fp, "step")) {
+                    fp += 4;
+                    while (*fp == ' ' || *fp == ':') fp++;
                     int st_len = 0;
-                    while (*fp != '\0' && strncmp(fp, "do", 2) != 0) {
+                    while (*fp != '\0' && !as_word_is(fp, "do")) {
                         if (st_len < (int)sizeof(step_expr) - 1) {
                             step_expr[st_len++] = *fp;
                         }
@@ -1764,15 +1974,25 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                     as_value_free(&st_val);
                 }
 
+                if (end_expr[0] == '\0' || step == 0) {
+                    kprintf(
+                        "Error on line %d: 'for' needs a limit and a "
+                        "non-zero step.\n",
+                        lines[i].orig_line);
+                    env->error = 1;
+                    i = done_line + 1;
+                    continue;
+                }
+
                 struct as_value end_val = as_eval_expression(env, end_expr);
                 int32_t target_end = as_value_to_i32(&end_val);
                 as_value_free(&end_val);
 
+                env->loop_depth++;
                 while (1) {
                     int32_t cur = as_value_to_i32(&iter_var->val);
                     if (step > 0 && cur > target_end) break;
                     if (step < 0 && cur < target_end) break;
-                    if (step == 0) break;
 
                     as_exec_block(env, lines, i + 1, done_line - 1);
 
@@ -1787,7 +2007,19 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                     as_value_init(&next_val, AS_TYPE_INT32, AS_TYPE_VOID);
                     next_val.u.i32 = cur + step;
                     as_value_cast_assign(&iter_var->val, &next_val);
+
+                    int32_t next = as_value_to_i32(&iter_var->val);
+                    if ((step > 0 && next <= cur) ||
+                        (step < 0 && next >= cur)) {
+                        kprintf(
+                            "Error on line %d: counter '%s' wraps at %d "
+                            "with step %d.\n",
+                            lines[i].orig_line, var_name, cur, step);
+                        env->error = 1;
+                        break;
+                    }
                 }
+                env->loop_depth--;
 
                 i = done_line + 1;
                 continue;
@@ -1808,7 +2040,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
 
             char cond_expr[AS_LINE_MAX];
             int c_len = 0;
-            while (*wp != '\0' && strncmp(wp, "do", 2) != 0) {
+            while (*wp != '\0' && !as_word_is(wp, "do")) {
                 if (c_len < (int)sizeof(cond_expr) - 1) {
                     cond_expr[c_len++] = *wp;
                 }
@@ -1816,6 +2048,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
             }
             cond_expr[c_len] = '\0';
 
+            env->loop_depth++;
             while (1) {
                 struct as_value cond = as_eval_expression(env, cond_expr);
                 int truthy = as_value_is_truthy(&cond);
@@ -1831,6 +2064,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                 }
                 env->continue_flag = 0;
             }
+            env->loop_depth--;
 
             i = done_line + 1;
             continue;
@@ -1888,8 +2122,8 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                             char cond_buf[AS_LINE_MAX];
                             int cb_len = 0;
                             while (*cond_ptr != '\0' &&
-                                   strncmp(cond_ptr, "do", 2) != 0 &&
-                                   strncmp(cond_ptr, "then", 4) != 0) {
+                                   !as_word_is(cond_ptr, "do") &&
+                                   !as_word_is(cond_ptr, "then")) {
                                 if (cb_len < (int)sizeof(cond_buf) - 1) {
                                     cond_buf[cb_len++] = *cond_ptr;
                                 }
@@ -1919,9 +2153,9 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
         }
 
         const char* eq_ptr = strchr(stmt, '=');
-        if (eq_ptr != 0 && (eq_ptr == stmt || *(eq_ptr - 1) != '=') &&
-            *(eq_ptr + 1) != '=' && *(eq_ptr - 1) != '!' &&
-            *(eq_ptr - 1) != '<' && *(eq_ptr - 1) != '>') {
+        if (eq_ptr != 0 && eq_ptr != stmt && *(eq_ptr - 1) != '=' &&
+            *(eq_ptr - 1) != '!' && *(eq_ptr - 1) != '<' &&
+            *(eq_ptr - 1) != '>' && *(eq_ptr + 1) != '=') {
             as_exec_assignment(env, stmt);
             i++;
             continue;
@@ -1940,6 +2174,12 @@ int adascript_run_string(const char* script) {
         return 0;
     }
 
+    if (as_run_depth >= AS_MAX_RUN_DEPTH) {
+        print("Error: scripts are nested too deeply (does one run itself?).\n");
+        return -1;
+    }
+    as_run_depth++;
+
     int line_count = 0;
     for (int i = 0; script[i] != '\0'; i++) {
         if (script[i] == '\n') {
@@ -1952,6 +2192,7 @@ int adascript_run_string(const char* script) {
         (struct as_line*)kmalloc(line_count * sizeof(struct as_line));
     if (lines == 0) {
         print("Error: out of memory.\n");
+        as_run_depth--;
         return -1;
     }
 
@@ -1959,6 +2200,7 @@ int adascript_run_string(const char* script) {
     if (script_copy == 0) {
         kfree(lines);
         print("Error: out of memory.\n");
+        as_run_depth--;
         return -1;
     }
 
@@ -1977,13 +2219,25 @@ int adascript_run_string(const char* script) {
         }
 
         int in_q = 0;
+        int escaped = 0;
         for (int j = 0; line_start[j] != '\0'; j++) {
+            if (escaped) {
+                escaped = 0;
+                continue;
+            }
+            if (in_q && line_start[j] == '\\') {
+                escaped = 1;
+                continue;
+            }
             if (line_start[j] == '"') {
                 in_q = !in_q;
             } else if (!in_q) {
-                if (line_start[j] == '#' ||
-                    (line_start[j] == '/' && line_start[j + 1] == '/') ||
-                    (line_start[j] == '-' && line_start[j + 1] == '-')) {
+                int word_start = (j == 0 || line_start[j - 1] == ' ' ||
+                                  line_start[j - 1] == '\t');
+                if (word_start &&
+                    (line_start[j] == '#' ||
+                     (line_start[j] == '/' && line_start[j + 1] == '/') ||
+                     (line_start[j] == '-' && line_start[j + 1] == '-'))) {
                     line_start[j] = '\0';
                     break;
                 }
@@ -2030,12 +2284,14 @@ int adascript_run_string(const char* script) {
     env.exit_flag = 0;
     env.break_flag = 0;
     env.continue_flag = 0;
+    env.loop_depth = 0;
 
     int result = as_exec_block(&env, lines, 0, total - 1);
 
     as_env_cleanup(&env);
     kfree(script_copy);
     kfree(lines);
+    as_run_depth--;
 
     return result == 0 && env.error == 0 ? 0 : -1;
 }
