@@ -21,6 +21,14 @@ void print(const char* s);
 /* Print a single character at the current cursor position. */
 void print_char(char c);
 
+/* Start collecting everything print()/print_char() would show, instead of
+ * drawing it. Captures may be nested; each begin needs its own end. */
+void screen_capture_begin(void);
+
+/* Stop the newest capture and return its text, allocated with kmalloc and
+ * owned by the caller, or 0 when there was nothing to capture. */
+char* screen_capture_end(void);
+
 /* Move the cursor one cell left, without erasing anything. */
 void cursor_left(void);
 

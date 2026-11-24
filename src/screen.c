@@ -3,6 +3,8 @@
 #include <stdint.h>
 
 #include "io.h"
+#include "kmalloc.h"
+#include "libc.h"
 
 // VGA text-mode screen driver: writes characters into the text buffer
 // at 0xB8000 (80x25 cells, one word each: character + color), tracks
@@ -37,6 +39,98 @@ static int cursor_programmed = -1;
 
 /* How many rows at the top print() must not touch. */
 static int top_row = 0;
+
+/* Nested output captures used by AdaScript commands. The first characters
+ * of a capture grow their buffer on the heap; an allocation failure just
+ * stops that capture where it is. */
+#define CAPTURE_MAX_DEPTH 8
+
+struct capture_state {
+    char* text;
+    int length;
+    int capacity;
+};
+
+static struct capture_state captures[CAPTURE_MAX_DEPTH];
+static int capture_depth = 0;
+
+/* Collect one character into the newest capture. */
+static void capture_char(char c) {
+    struct capture_state* state;
+
+    if (capture_depth <= 0 || capture_depth > CAPTURE_MAX_DEPTH) {
+        return;
+    }
+
+    state = &captures[capture_depth - 1];
+
+    /* A backspace takes back the character before it. */
+    if (c == '\b') {
+        if (state->length > 0) {
+            state->length--;
+        }
+        return;
+    }
+
+    if (state->length + 1 >= state->capacity) {
+        int new_capacity = state->capacity == 0 ? 128 : state->capacity * 2;
+        char* grown = (char*)kmalloc((size_t)new_capacity);
+
+        if (grown == 0) {
+            return;
+        }
+        if (state->text != 0) {
+            memcpy(grown, state->text, (size_t)state->length);
+            kfree(state->text);
+        }
+        state->text = grown;
+        state->capacity = new_capacity;
+    }
+
+    state->text[state->length] = c;
+    state->length++;
+}
+
+void screen_capture_begin(void) {
+    if (capture_depth < CAPTURE_MAX_DEPTH) {
+        captures[capture_depth].text = 0;
+        captures[capture_depth].length = 0;
+        captures[capture_depth].capacity = 0;
+    }
+
+    capture_depth++;
+}
+
+char* screen_capture_end(void) {
+    struct capture_state* state;
+    char* text;
+
+    if (capture_depth <= 0) {
+        return 0;
+    }
+
+    capture_depth--;
+
+    if (capture_depth >= CAPTURE_MAX_DEPTH) {
+        return 0;
+    }
+
+    state = &captures[capture_depth];
+    text = state->text;
+
+    if (text != 0) {
+        if (state->length >= state->capacity) {
+            state->length = state->capacity - 1;
+        }
+        text[state->length] = '\0';
+    }
+
+    state->text = 0;
+    state->length = 0;
+    state->capacity = 0;
+
+    return text;
+}
 
 /* Turn a (row, column) pair into an index into the VGA memory array. */
 static int cell_index(int row, int col) { return row * SCREEN_WIDTH + col; }
@@ -167,6 +261,11 @@ static int move_right(void) {
 
 /* Print one character at the cursor, then advance the cursor. */
 static void put_char(char c) {
+    if (capture_depth > 0) {
+        capture_char(c);
+        return;
+    }
+
     if (c == '\n') {
         new_line();
         return;

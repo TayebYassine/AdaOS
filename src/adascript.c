@@ -1,5 +1,6 @@
 #include "adascript.h"
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -67,12 +68,20 @@ struct as_env {
     int break_flag;
     int continue_flag;
     int loop_depth;
+    /* Where the error happened, and how to explain it. */
+    int error_line;
+    int error_col;
+    char error_text[AS_LINE_MAX];
+    /* The statement being run, kept up to date by as_exec_block(). */
+    int cur_line;
+    int cur_col;
 };
 
 /* One parsed line in the script. */
 struct as_line {
     char* text;
     int orig_line;
+    int orig_col;
     int indent;
 };
 
@@ -371,6 +380,177 @@ static void as_copy_text(char* buf, const char* src, int max) {
         i++;
     }
     buf[i] = '\0';
+}
+
+/* A small formatter for error messages: %s, %d, %u, %c, %x and %%. */
+static void as_format_text(char* out, int max, const char* fmt, va_list args) {
+    int pos = 0;
+
+    if (max <= 0) {
+        return;
+    }
+
+    for (int i = 0; fmt[i] != '\0'; i++) {
+        char tmp[32];
+        const char* text = 0;
+
+        if (fmt[i] != '%') {
+            if (pos < max - 1) {
+                out[pos++] = fmt[i];
+            }
+            continue;
+        }
+
+        i++;
+        if (fmt[i] == '\0') {
+            break;
+        }
+
+        switch (fmt[i]) {
+            case 's':
+                text = va_arg(args, const char*);
+                if (text == 0) {
+                    text = "(null)";
+                }
+                break;
+            case 'd':
+                itoa(va_arg(args, int), tmp);
+                text = tmp;
+                break;
+            case 'u':
+                utoa(va_arg(args, unsigned int), tmp);
+                text = tmp;
+                break;
+            case 'c':
+                tmp[0] = (char)va_arg(args, int);
+                tmp[1] = '\0';
+                text = tmp;
+                break;
+            case 'x': {
+                unsigned int value = va_arg(args, unsigned int);
+                int digits = 0;
+
+                do {
+                    tmp[digits++] = "0123456789abcdef"[value & 0xF];
+                    value >>= 4;
+                } while (value != 0 && digits < (int)sizeof(tmp));
+
+                for (int j = 0; j < digits / 2; j++) {
+                    char swap = tmp[j];
+                    tmp[j] = tmp[digits - 1 - j];
+                    tmp[digits - 1 - j] = swap;
+                }
+                tmp[digits] = '\0';
+                text = tmp;
+                break;
+            }
+            case '%':
+                tmp[0] = '%';
+                tmp[1] = '\0';
+                text = tmp;
+                break;
+            default:
+                tmp[0] = '%';
+                tmp[1] = fmt[i];
+                tmp[2] = '\0';
+                text = tmp;
+                break;
+        }
+
+        for (int j = 0; text[j] != '\0' && pos < max - 1; j++) {
+            out[pos++] = text[j];
+        }
+    }
+
+    out[pos] = '\0';
+}
+
+/* Stop the script on an error, showing where it happened. */
+static void as_errorf(struct as_env* env, const char* fmt, ...) {
+    va_list args;
+
+    if (env->error) {
+        return;
+    }
+
+    va_start(args, fmt);
+    as_format_text(env->error_text, sizeof(env->error_text), fmt, args);
+    va_end(args);
+
+    env->error = 1;
+    env->error_line = env->cur_line > 0 ? env->cur_line : 1;
+    env->error_col = env->cur_col > 0 ? env->cur_col : 1;
+
+    kprintf("Error: An unexpected error at line %d, column %d\n",
+            env->error_line, env->error_col);
+    kprintf("Exception: %s\n", env->error_text);
+}
+
+/* Turn a command's captured "Error: ..." line into a script error. */
+static void as_error_from_command(struct as_env* env, const char* output) {
+    char message[AS_LINE_MAX];
+    const char* p = output != 0 ? output : "";
+    int n = 0;
+
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+        p++;
+    }
+
+    if (strncmp(p, "Error:", 6) == 0) {
+        p += 6;
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+    }
+
+    while (*p != '\0' && *p != '\n' && *p != '\r' &&
+           n < (int)sizeof(message) - 1) {
+        message[n++] = *p++;
+    }
+
+    while (n > 0 && (message[n - 1] == ' ' || message[n - 1] == '\t')) {
+        n--;
+    }
+    message[n] = '\0';
+
+    if (n == 0) {
+        as_errorf(env, "command failed.");
+    } else {
+        as_errorf(env, "%s", message);
+    }
+}
+
+/* Command results are strings, so they should not end in a newline. */
+static void as_trim_command_output(char* text) {
+    int len;
+
+    if (text == 0) {
+        return;
+    }
+
+    len = (int)strlen(text);
+    while (len > 0 && (text[len - 1] == '\n' || text[len - 1] == '\r')) {
+        text[--len] = '\0';
+    }
+}
+
+/* Run an output command and hand back its text as a string value. */
+static int as_run_command_value(struct as_env* env, const char* command,
+                                struct as_value* out) {
+    char* output = 0;
+
+    if (!command_run_capture(command, &output)) {
+        as_error_from_command(env, output);
+        kfree(output);
+        return 0;
+    }
+
+    as_trim_command_output(output);
+
+    as_value_init(out, AS_TYPE_STRING, AS_TYPE_VOID);
+    out->u.str = output != 0 ? output : as_strdup("");
+    out->is_null = out->u.str == 0;
+    return 1;
 }
 
 /* Format a value into a human-readable text string. */
@@ -1098,15 +1278,13 @@ static struct as_value as_parse_mul(struct as_env* env, struct as_lexer* lex) {
             res = a * b;
         } else if (op == TOK_SLASH) {
             if (b == 0) {
-                print("Error: division by zero.\n");
-                env->error = 1;
+                as_errorf(env, "division by zero.");
             } else {
                 res = a / b;
             }
         } else if (op == TOK_PERCENT) {
             if (b == 0) {
-                print("Error: modulo by zero.\n");
-                env->error = 1;
+                as_errorf(env, "modulo by zero.");
             } else {
                 res = a % b;
             }
@@ -1258,8 +1436,13 @@ static struct as_value as_parse_primary(struct as_env* env,
 
         struct as_var* var = as_env_lookup(env, name);
         if (var == 0) {
-            kprintf("Error: variable '%s' not found.\n", name);
-            env->error = 1;
+            /* A command that prints text acts as a string value here, so
+             * "pwd + \"/programs\"" reads the directory the command shows. */
+            if (command_returns_output(name)) {
+                as_run_command_value(env, name, &val);
+            } else {
+                as_errorf(env, "variable '%s' not found.", name);
+            }
             return val;
         }
 
@@ -1274,14 +1457,12 @@ static struct as_value as_parse_primary(struct as_env* env,
             as_value_free(&idx_val);
 
             if (var->val.type != AS_TYPE_ARRAY) {
-                kprintf("Error: '%s' is not an array.\n", name);
-                env->error = 1;
+                as_errorf(env, "'%s' is not an array.", name);
                 return val;
             }
             if (idx < 0 || idx >= var->val.u.arr.count) {
-                kprintf("Error: array index %d out of bounds for '%s'.\n", idx,
-                        name);
-                env->error = 1;
+                as_errorf(env, "array index %d out of bounds for '%s'.", idx,
+                          name);
                 return val;
             }
             as_value_copy(&val, &var->val.u.arr.items[idx]);
@@ -1320,17 +1501,30 @@ static int as_word_is(const char* p, const char* kw) {
            after == ';';
 }
 
-/* Find the matching "done" (or "endif"/"fi") for a block. */
+/* Does this line open a block? */
+static int as_is_block_start(const char* t) {
+    return strncmp(t, "for ", 4) == 0 || strncmp(t, "while ", 6) == 0 ||
+           strncmp(t, "if ", 3) == 0;
+}
+
+/* Does this line close a block? "done" is the old spelling and closes any
+ * block; the specific endings make the code easier to read. */
+static int as_is_block_end(const char* t) {
+    return strcmp(t, "done") == 0 || strcmp(t, "done;") == 0 ||
+           strcmp(t, "endfor") == 0 || strcmp(t, "endfor;") == 0 ||
+           strcmp(t, "endwhile") == 0 || strcmp(t, "endwhile;") == 0 ||
+           strcmp(t, "endif") == 0 || strcmp(t, "endif;") == 0 ||
+           strcmp(t, "fi") == 0 || strcmp(t, "fi;") == 0;
+}
+
+/* Find the matching ending for a block. */
 static int as_find_matching_done(struct as_line* lines, int total, int start) {
     int depth = 1;
     for (int i = start + 1; i < total; i++) {
         const char* t = lines[i].text;
-        if (strncmp(t, "for ", 4) == 0 || strncmp(t, "while ", 6) == 0 ||
-            strncmp(t, "if ", 3) == 0) {
+        if (as_is_block_start(t)) {
             depth++;
-        } else if (strcmp(t, "done") == 0 || strcmp(t, "done;") == 0 ||
-                   strcmp(t, "endif") == 0 || strcmp(t, "endif;") == 0 ||
-                   strcmp(t, "fi") == 0 || strcmp(t, "fi;") == 0) {
+        } else if (as_is_block_end(t)) {
             depth--;
             if (depth == 0) {
                 return i;
@@ -1346,6 +1540,64 @@ static int as_is_disallowed_command(const char* cmd) {
             strcmp(cmd, "write") == 0 || strcmp(cmd, "reboot") == 0 ||
             strcmp(cmd, "shutdown") == 0 || strcmp(cmd, "settime") == 0 ||
             strcmp(cmd, "setdate") == 0);
+}
+
+/* Commands that take one path or name, and so can take an expression too. */
+static int as_command_takes_path(const char* cmd) {
+    return strcmp(cmd, "cd") == 0 || strcmp(cmd, "cat") == 0 ||
+           strcmp(cmd, "ls") == 0 || strcmp(cmd, "tree") == 0 ||
+           strcmp(cmd, "mkdir") == 0 || strcmp(cmd, "rm") == 0 ||
+           strcmp(cmd, "find") == 0 || strcmp(cmd, "run") == 0;
+}
+
+/* Should the argument be evaluated as an expression? That is the case when
+ * it starts with a command that returns text, as in  cd pwd + "/x" . */
+static int as_arg_is_expression(const char* rest) {
+    char word[32];
+    int len = 0;
+
+    while (*rest == ' ' || *rest == '\t') {
+        rest++;
+    }
+
+    if (*rest == '(') {
+        return 1;
+    }
+    if (*rest == '"' || *rest == '\0') {
+        return 0;
+    }
+
+    while (*rest != '\0' && *rest != ' ' && *rest != '\t' && *rest != '+' &&
+           *rest != '-' && *rest != '*' && *rest != '/' && *rest != ';' &&
+           len < (int)sizeof(word) - 1) {
+        word[len++] = *rest++;
+    }
+    word[len] = '\0';
+
+    return command_returns_output(word);
+}
+
+/* Build  command "value"  so the shell splitter keeps the value together. */
+static void as_make_command_value(char* out, int max, const char* cmd,
+                                  const char* value) {
+    int pos = 0;
+
+    for (int i = 0; cmd[i] != '\0' && pos < max - 1; i++) {
+        out[pos++] = cmd[i];
+    }
+    if (pos < max - 1) {
+        out[pos++] = ' ';
+    }
+    if (pos < max - 1) {
+        out[pos++] = '"';
+    }
+    for (int i = 0; value[i] != '\0' && pos < max - 1; i++) {
+        out[pos++] = value[i] == '"' ? ' ' : value[i];
+    }
+    if (pos < max - 1) {
+        out[pos++] = '"';
+    }
+    out[pos] = '\0';
 }
 
 /* Execute a built-in OS command from AdaScript with variable interpolation. */
@@ -1366,70 +1618,105 @@ static void as_exec_system_cmd(struct as_env* env, const char* line) {
     cmd[cmd_len] = '\0';
 
     if (as_is_disallowed_command(cmd)) {
-        kprintf("Error: command '%s' cannot be run in AdaScript.\n", cmd);
-        env->error = 1;
+        as_errorf(env, "command '%s' cannot be run in AdaScript.", cmd);
         return;
     }
 
-    memcpy(expanded, cmd, cmd_len);
-    exp_pos = cmd_len;
+    const char* rest = line + i;
+    while (*rest == ' ' || *rest == '\t') rest++;
 
-    while (line[i] != '\0' && line[i] != ';') {
-        if (line[i] == ' ') {
-            if (exp_pos < (int)sizeof(expanded) - 1) {
-                expanded[exp_pos++] = ' ';
-            }
-            i++;
-            continue;
+    if (as_command_takes_path(cmd) && as_arg_is_expression(rest)) {
+        struct as_value val = as_eval_expression(env, rest);
+        char value[AS_LINE_MAX];
+
+        if (env->error) {
+            as_value_free(&val);
+            return;
         }
 
-        if (line[i] == '"') {
-            i++;
-            while (line[i] != '\0' && line[i] != '"') {
+        as_value_format(&val, value, sizeof(value), 0);
+        as_value_free(&val);
+        as_make_command_value(expanded, sizeof(expanded), cmd, value);
+    } else {
+        memcpy(expanded, cmd, cmd_len);
+        exp_pos = cmd_len;
+
+        while (line[i] != '\0' && line[i] != ';') {
+            if (line[i] == ' ') {
                 if (exp_pos < (int)sizeof(expanded) - 1) {
-                    expanded[exp_pos++] = line[i];
+                    expanded[exp_pos++] = ' ';
+                }
+                i++;
+                continue;
+            }
+
+            if (line[i] == '"') {
+                i++;
+                while (line[i] != '\0' && line[i] != '"') {
+                    if (exp_pos < (int)sizeof(expanded) - 1) {
+                        expanded[exp_pos++] = line[i];
+                    }
+                    i++;
+                }
+                if (line[i] == '"') i++;
+                continue;
+            }
+
+            char word[AS_LINE_MAX];
+            int w_len = 0;
+            int has_dollar = (line[i] == '$');
+            if (has_dollar) i++;
+
+            while (line[i] != '\0' && line[i] != ' ' && line[i] != ';') {
+                if (w_len < (int)sizeof(word) - 1) {
+                    word[w_len++] = line[i];
                 }
                 i++;
             }
-            if (line[i] == '"') i++;
-            continue;
+            word[w_len] = '\0';
+
+            struct as_var* var = has_dollar ? as_env_lookup(env, word) : 0;
+            if (var != 0) {
+                char val_buf[AS_LINE_MAX];
+                as_value_format(&var->val, val_buf, sizeof(val_buf), 0);
+                int v_len = (int)strlen(val_buf);
+                if (exp_pos + v_len < (int)sizeof(expanded) - 1) {
+                    memcpy(expanded + exp_pos, val_buf, v_len);
+                    exp_pos += v_len;
+                }
+            } else {
+                if (has_dollar && exp_pos < (int)sizeof(expanded) - 1) {
+                    expanded[exp_pos++] = '$';
+                }
+                if (exp_pos + w_len < (int)sizeof(expanded) - 1) {
+                    memcpy(expanded + exp_pos, word, w_len);
+                    exp_pos += w_len;
+                }
+            }
         }
 
-        char word[AS_LINE_MAX];
-        int w_len = 0;
-        int has_dollar = (line[i] == '$');
-        if (has_dollar) i++;
+        expanded[exp_pos] = '\0';
+    }
 
-        while (line[i] != '\0' && line[i] != ' ' && line[i] != ';') {
-            if (w_len < (int)sizeof(word) - 1) {
-                word[w_len++] = line[i];
-            }
-            i++;
-        }
-        word[w_len] = '\0';
+    char* output = 0;
+    int ok = command_run_capture(expanded, &output);
 
-        struct as_var* var = has_dollar ? as_env_lookup(env, word) : 0;
-        if (var != 0) {
-            char val_buf[AS_LINE_MAX];
-            as_value_format(&var->val, val_buf, sizeof(val_buf), 0);
-            int v_len = (int)strlen(val_buf);
-            if (exp_pos + v_len < (int)sizeof(expanded) - 1) {
-                memcpy(expanded + exp_pos, val_buf, v_len);
-                exp_pos += v_len;
-            }
-        } else {
-            if (has_dollar && exp_pos < (int)sizeof(expanded) - 1) {
-                expanded[exp_pos++] = '$';
-            }
-            if (exp_pos + w_len < (int)sizeof(expanded) - 1) {
-                memcpy(expanded + exp_pos, word, w_len);
-                exp_pos += w_len;
-            }
+    if (!ok) {
+        as_error_from_command(env, output);
+        kfree(output);
+        return;
+    }
+
+    if (output != 0 && output[0] != '\0') {
+        int len = (int)strlen(output);
+
+        print(output);
+        if (len == 0 || output[len - 1] != '\n') {
+            print_char('\n');
         }
     }
 
-    expanded[exp_pos] = '\0';
-    command_execute(expanded);
+    kfree(output);
 }
 
 /* Execute a "define" statement. */
@@ -1451,15 +1738,12 @@ static void as_exec_define(struct as_env* env, const char* stmt) {
     name[n_len] = '\0';
 
     if (name[0] == '\0') {
-        print("Error: define needs a name.\n");
-        env->error = 1;
+        as_errorf(env, "define needs a name.");
         return;
     }
     if (name_too_long) {
-        kprintf(
-            "Error: variable name '%.*s...' is longer than %d characters.\n",
-            AS_NAME_MAX, name, AS_NAME_MAX - 1);
-        env->error = 1;
+        as_errorf(env, "a variable name is longer than %d characters.",
+                  AS_NAME_MAX - 1);
         return;
     }
 
@@ -1480,15 +1764,13 @@ static void as_exec_define(struct as_env* env, const char* stmt) {
     enum as_type type;
     enum as_type elem_type;
     if (!as_parse_type(type_str, &type, &elem_type)) {
-        kprintf("Error: unknown type '%s'.\n", type_str);
-        env->error = 1;
+        as_errorf(env, "unknown type '%s'.", type_str);
         return;
     }
 
     struct as_var* var = as_env_define(env, name, type, elem_type);
     if (var == 0) {
-        kprintf("Error: cannot define variable '%s'.\n", name);
-        env->error = 1;
+        as_errorf(env, "cannot define variable '%s'.", name);
         return;
     }
 
@@ -1507,9 +1789,12 @@ static void as_exec_define(struct as_env* env, const char* stmt) {
         }
 
         struct as_value val = as_eval_expression(env, expr_buf);
+        if (env->error) {
+            as_value_free(&val);
+            return;
+        }
         if (var->val.type == AS_TYPE_ARRAY && val.type != AS_TYPE_ARRAY) {
-            kprintf("Error: '%s' is an array; give it { ... }.\n", name);
-            env->error = 1;
+            as_errorf(env, "'%s' is an array; give it { ... }.", name);
         } else {
             as_value_cast_assign(&var->val, &val);
         }
@@ -1533,15 +1818,40 @@ static void as_exec_delete(struct as_env* env, const char* stmt) {
     name[n_len] = '\0';
 
     if (!as_env_delete(env, name)) {
-        kprintf("Error: variable '%s' not found.\n", name);
-        env->error = 1;
+        as_errorf(env, "variable '%s' not found.", name);
     }
 }
 
 /* Execute a "print" statement. */
 static void as_exec_print(struct as_env* env, const char* stmt) {
     const char* p = stmt + 5;
+    char body[AS_LINE_MAX];
+    int body_len;
+    int newline = 0;
+
     while (*p == ' ') p++;
+    as_copy_text(body, p, sizeof(body));
+
+    /* A trailing "endl" is the newline instruction, not a value. */
+    body_len = (int)strlen(body);
+    while (body_len > 0 &&
+           (body[body_len - 1] == ' ' || body[body_len - 1] == '\t' ||
+            body[body_len - 1] == ';')) {
+        body[--body_len] = '\0';
+    }
+    if (body_len >= 4 && strcmp(body + body_len - 4, "endl") == 0 &&
+        (body_len == 4 || body[body_len - 5] == ' ' ||
+         body[body_len - 5] == '\t' || body[body_len - 5] == ',')) {
+        newline = 1;
+        body_len -= 4;
+        while (body_len > 0 &&
+               (body[body_len - 1] == ' ' || body[body_len - 1] == '\t' ||
+                body[body_len - 1] == ',')) {
+            body[--body_len] = '\0';
+        }
+    }
+
+    p = body;
 
     if (*p == '\0' || *p == ';') {
         print_char('\n');
@@ -1549,6 +1859,7 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
     }
 
     int first = 1;
+
     while (*p != '\0' && *p != ';') {
         char arg_buf[AS_LINE_MAX];
         int a_len = 0;
@@ -1593,6 +1904,13 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
             a_start[--a_end] = '\0';
         }
 
+        /* "endl" ends the line instead of printing a value. */
+        if (strcmp(a_start, "endl") == 0) {
+            newline = 1;
+            while (*p == ' ') p++;
+            continue;
+        }
+
         if (!first) {
             print_char(' ');
         }
@@ -1600,6 +1918,10 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
 
         struct as_value val = as_eval_expression(env, a_start);
         char out_buf[AS_LINE_MAX];
+        if (env->error) {
+            as_value_free(&val);
+            return;
+        }
         if (val.type == AS_TYPE_STRING && val.u.str != 0) {
             print(val.u.str);
         } else {
@@ -1611,7 +1933,9 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
         while (*p == ' ') p++;
     }
 
-    print_char('\n');
+    if (newline) {
+        print_char('\n');
+    }
 }
 
 /* Execute an "input" statement: reads a line from the user into a variable. */
@@ -1698,6 +2022,10 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
     }
 
     struct as_value val = as_eval_expression(env, rhs_buf);
+    if (env->error) {
+        as_value_free(&val);
+        return;
+    }
 
     char* lbrack = strchr(l_start, '[');
     if (lbrack != 0) {
@@ -1706,22 +2034,19 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
         if (rbrack != 0) *rbrack = '\0';
 
         if ((int)strlen(l_start) >= AS_NAME_MAX) {
-            kprintf("Error: variable name '%s' is too long.\n", l_start);
-            env->error = 1;
+            as_errorf(env, "variable name '%s' is too long.", l_start);
             as_value_free(&val);
             return;
         }
 
         struct as_var* var = as_env_lookup(env, l_start);
         if (var == 0) {
-            kprintf("Error: variable '%s' not found.\n", l_start);
-            env->error = 1;
+            as_errorf(env, "variable '%s' not found.", l_start);
             as_value_free(&val);
             return;
         }
         if (var->val.type != AS_TYPE_ARRAY) {
-            kprintf("Error: '%s' is not an array.\n", l_start);
-            env->error = 1;
+            as_errorf(env, "'%s' is not an array.", l_start);
             as_value_free(&val);
             return;
         }
@@ -1731,9 +2056,8 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
         as_value_free(&idx_val);
 
         if (idx < 0 || idx >= var->val.u.arr.count) {
-            kprintf("Error: array index %d out of bounds for '%s'.\n", idx,
-                    l_start);
-            env->error = 1;
+            as_errorf(env, "array index %d out of bounds for '%s'.", idx,
+                      l_start);
             as_value_free(&val);
             return;
         }
@@ -1741,8 +2065,7 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
         as_value_cast_assign(&var->val.u.arr.items[idx], &val);
     } else {
         if ((int)strlen(l_start) >= AS_NAME_MAX) {
-            kprintf("Error: variable name '%s' is too long.\n", l_start);
-            env->error = 1;
+            as_errorf(env, "variable name '%s' is too long.", l_start);
             as_value_free(&val);
             return;
         }
@@ -1753,9 +2076,8 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
         }
         if (var != 0) {
             if (var->val.type == AS_TYPE_ARRAY && val.type != AS_TYPE_ARRAY) {
-                kprintf("Error: '%s' is an array; assign { ... } instead.\n",
-                        l_start);
-                env->error = 1;
+                as_errorf(env, "'%s' is an array; assign { ... } instead.",
+                          l_start);
             } else {
                 as_value_cast_assign(&var->val, &val);
             }
@@ -1770,12 +2092,18 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                          int end) {
     int i = start;
     while (i <= end) {
+        if (env->error) {
+            return -1;
+        }
         if (env->exit_flag || env->break_flag || env->continue_flag) {
             return 0;
         }
 
         const char* stmt = lines[i].text;
         while (*stmt == ' ') stmt++;
+
+        env->cur_line = lines[i].orig_line;
+        env->cur_col = lines[i].orig_col;
 
         if (*stmt == '\0') {
             i++;
@@ -1784,8 +2112,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
 
         if (strcmp(stmt, "break") == 0 || strcmp(stmt, "break;") == 0) {
             if (env->loop_depth == 0) {
-                print("Error: 'break' outside a loop.\n");
-                env->error = 1;
+                as_errorf(env, "'break' outside a loop.");
                 i++;
                 continue;
             }
@@ -1794,8 +2121,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
         }
         if (strcmp(stmt, "continue") == 0 || strcmp(stmt, "continue;") == 0) {
             if (env->loop_depth == 0) {
-                print("Error: 'continue' outside a loop.\n");
-                env->error = 1;
+                as_errorf(env, "'continue' outside a loop.");
                 i++;
                 continue;
             }
@@ -1836,9 +2162,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
         if (strncmp(stmt, "for ", 4) == 0) {
             int done_line = as_find_matching_done(lines, end + 1, i);
             if (done_line < 0) {
-                kprintf("Error on line %d: 'for' without matching 'done'.\n",
-                        lines[i].orig_line);
-                env->error = 1;
+                as_errorf(env, "'for' without matching 'endfor' (or 'done').");
                 return -1;
             }
 
@@ -1876,9 +2200,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
 
                 struct as_var* arr_var = as_env_lookup(env, arr_name);
                 if (arr_var == 0 || arr_var->val.type != AS_TYPE_ARRAY) {
-                    kprintf("Error on line %d: '%s' is not an array.\n",
-                            lines[i].orig_line, arr_name);
-                    env->error = 1;
+                    as_errorf(env, "'%s' is not an array.", arr_name);
                     i = done_line + 1;
                     continue;
                 }
@@ -1901,6 +2223,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                     as_value_copy(&iter_var->val, &arr_var->val.u.arr.items[k]);
                     as_exec_block(env, lines, i + 1, done_line - 1);
 
+                    if (env->error) break;
                     if (env->exit_flag) break;
                     if (env->break_flag) {
                         env->break_flag = 0;
@@ -1975,11 +2298,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                 }
 
                 if (end_expr[0] == '\0' || step == 0) {
-                    kprintf(
-                        "Error on line %d: 'for' needs a limit and a "
-                        "non-zero step.\n",
-                        lines[i].orig_line);
-                    env->error = 1;
+                    as_errorf(env, "'for' needs a limit and a non-zero step.");
                     i = done_line + 1;
                     continue;
                 }
@@ -1996,6 +2315,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
 
                     as_exec_block(env, lines, i + 1, done_line - 1);
 
+                    if (env->error) break;
                     if (env->exit_flag) break;
                     if (env->break_flag) {
                         env->break_flag = 0;
@@ -2011,11 +2331,8 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                     int32_t next = as_value_to_i32(&iter_var->val);
                     if ((step > 0 && next <= cur) ||
                         (step < 0 && next >= cur)) {
-                        kprintf(
-                            "Error on line %d: counter '%s' wraps at %d "
-                            "with step %d.\n",
-                            lines[i].orig_line, var_name, cur, step);
-                        env->error = 1;
+                        as_errorf(env, "counter '%s' wraps at %d with step %d.",
+                                  var_name, cur, step);
                         break;
                     }
                 }
@@ -2029,9 +2346,8 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
         if (strncmp(stmt, "while ", 6) == 0) {
             int done_line = as_find_matching_done(lines, end + 1, i);
             if (done_line < 0) {
-                kprintf("Error on line %d: 'while' without matching 'done'.\n",
-                        lines[i].orig_line);
-                env->error = 1;
+                as_errorf(env,
+                          "'while' without matching 'endwhile' (or 'done').");
                 return -1;
             }
 
@@ -2057,6 +2373,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
 
                 as_exec_block(env, lines, i + 1, done_line - 1);
 
+                if (env->error) break;
                 if (env->exit_flag) break;
                 if (env->break_flag) {
                     env->break_flag = 0;
@@ -2073,9 +2390,7 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
         if (strncmp(stmt, "if ", 3) == 0) {
             int done_line = as_find_matching_done(lines, end + 1, i);
             if (done_line < 0) {
-                kprintf("Error on line %d: 'if' without matching 'done'.\n",
-                        lines[i].orig_line);
-                env->error = 1;
+                as_errorf(env, "'if' without matching 'endif' (or 'done').");
                 return -1;
             }
 
@@ -2087,16 +2402,9 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                 if (k < done_line) {
                     const char* kt = lines[k].text;
                     while (*kt == ' ') kt++;
-                    if (strncmp(kt, "for ", 4) == 0 ||
-                        strncmp(kt, "while ", 6) == 0 ||
-                        strncmp(kt, "if ", 3) == 0) {
+                    if (as_is_block_start(kt)) {
                         depth++;
-                    } else if (strcmp(kt, "done") == 0 ||
-                               strcmp(kt, "done;") == 0 ||
-                               strcmp(kt, "endif") == 0 ||
-                               strcmp(kt, "endif;") == 0 ||
-                               strcmp(kt, "fi") == 0 ||
-                               strcmp(kt, "fi;") == 0) {
+                    } else if (as_is_block_end(kt)) {
                         depth--;
                     }
                 }
@@ -2141,6 +2449,9 @@ static int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                         if (run_branch) {
                             as_exec_block(env, lines, branch_start + 1, k - 1);
                             executed = 1;
+                            if (env->error) {
+                                return -1;
+                            }
                         }
                     }
 
@@ -2209,6 +2520,7 @@ int adascript_run_string(const char* script) {
     char* cur = script_copy;
 
     while (*cur != '\0') {
+        char* raw_start = cur;
         char* line_start = cur;
         while (*cur != '\0' && *cur != '\n') {
             cur++;
@@ -2271,6 +2583,7 @@ int adascript_run_string(const char* script) {
         if (len > 0) {
             lines[total].text = line_start;
             lines[total].orig_line = curr_orig_line;
+            lines[total].orig_col = (int)(line_start - raw_start) + 1;
             lines[total].indent = indent;
             total++;
         }
@@ -2285,6 +2598,11 @@ int adascript_run_string(const char* script) {
     env.break_flag = 0;
     env.continue_flag = 0;
     env.loop_depth = 0;
+    env.error_line = 0;
+    env.error_col = 0;
+    env.error_text[0] = '\0';
+    env.cur_line = 0;
+    env.cur_col = 0;
 
     int result = as_exec_block(&env, lines, 0, total - 1);
 

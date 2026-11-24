@@ -758,3 +758,79 @@ void command_execute(char* line) {
 
     diskfs_sync();
 }
+
+/* Did a command collect an error instead of normal output? */
+static int command_output_is_error(const char* text) {
+    if (text == 0) {
+        return 0;
+    }
+
+    while (*text == ' ' || *text == '\t' || *text == '\r' || *text == '\n') {
+        text++;
+    }
+
+    return strncmp(text, "Error:", 6) == 0;
+}
+
+/* Run a command line and capture its screen output for AdaScript. */
+int command_run_capture(const char* line, char** output) {
+    char* copy;
+    char* text;
+    size_t len;
+
+    if (output != 0) {
+        *output = 0;
+    }
+
+    len = strlen(line);
+    copy = (char*)kmalloc(len + 1);
+    if (copy == 0) {
+        return 0;
+    }
+    memcpy(copy, line, len + 1);
+
+    screen_capture_begin();
+    command_execute(copy);
+    text = screen_capture_end();
+    kfree(copy);
+
+    if (text == 0) {
+        text = (char*)kmalloc(1);
+        if (text != 0) {
+            text[0] = '\0';
+        }
+    }
+
+    if (output != 0) {
+        *output = text;
+    } else {
+        kfree(text);
+    }
+
+    return !command_output_is_error(text);
+}
+
+/* Commands whose output makes sense as a string value in AdaScript. */
+int command_returns_output(const char* name) {
+    int command = find_command(name);
+
+    switch (command) {
+        case CMD_HELP:
+        case CMD_UPTIME:
+        case CMD_MEM:
+        case CMD_TASKS:
+        case CMD_LS:
+        case CMD_PWD:
+        case CMD_CAT:
+        case CMD_FIND:
+        case CMD_TREE:
+        case CMD_DISK:
+        case CMD_TIME:
+        case CMD_CAL:
+        case CMD_VER:
+        case CMD_RUN:
+            return 1;
+        default:
+            return 0;
+    }
+}
