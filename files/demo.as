@@ -7,24 +7,18 @@ define y: uint16;
 define z: string = null;
 define flag: bool = true;
 
-print "x (int8):", x;
-print "name (string):", name;
-print "y (uint16 default):", y;
-print "z (null string):", z;
-print "flag (bool):", flag;
-
 # Arrays
 define w: uint32[] = { 10, 20, 30 };
 define names: string[] = { "Alice", "Bob", "Charlie" };
 
 print "Array w:", w;
 print "Array w length:", len(w);
-print "Element w[0]:", w[0];
-print "Element w[1]:", w[1];
+print "First element w[0]:", w[0];
+print "Second element w[1]:", w[1];
 
 # Numeric loop
 define i: uint8 = 0;
-for i from 0 to 5 step 1 do
+for i from 0 to 3 step 1 do
   print "Counter i is: " + i;
 done;
 
@@ -59,6 +53,5 @@ pwd;
 # Variables deletion
 delete x;
 delete y;
-print "Variables x and y successfully deleted from RAM.";
 
 print "Execution done."

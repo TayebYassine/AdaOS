@@ -31,6 +31,7 @@
 #define SCANCODE_RSHIFT 0x36
 #define SCANCODE_CAPSLOCK 0x3A
 #define SCANCODE_CTRL 0x1D
+#define SCANCODE_ESC 0x01
 
 // Arrow keys always come with the 0xE0 prefix; these are the second byte.
 #define SCANCODE_UP 0x48
@@ -148,6 +149,10 @@ static int translate(uint8_t scancode) {
 
     if (released) {
         return 0;
+    }
+
+    if (scancode == SCANCODE_ESC) {
+        return KEY_ESC;
     }
 
     char c = shift_held ? shifted_map[scancode] : normal_map[scancode];

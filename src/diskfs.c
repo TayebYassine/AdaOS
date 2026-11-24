@@ -72,9 +72,34 @@ static struct diskfs_entry table[DISKFS_ENTRY_CAPACITY];
 static uint8_t sector_buffer[ATA_SECTOR_SIZE];
 
 static int present = 0;
+static int probed = 0;
+static int blank = 0;
 static uint32_t saved_entries = 0;
 static uint32_t used_sectors = 0;
 static uint32_t planned = 0;
+
+static void (*progress_hook)(int percent) = 0;
+static int progress_base = 0;
+static int progress_span = 100;
+static uint32_t progress_done = 0;
+static uint32_t progress_total = 0;
+
+/* Tell the watcher, if there is one, how far the phase has got. */
+static void report_progress(int percent) {
+    if (progress_hook != 0) {
+        progress_hook(percent);
+    }
+}
+
+/* The percentage the save has earned so far. */
+static int save_percent(void) {
+    if (progress_total == 0) {
+        return progress_base + progress_span;
+    }
+
+    return progress_base +
+           (int)(progress_done * (uint32_t)progress_span / progress_total);
+}
 
 /* Does the superblock describe this disk and our layout? */
 static int super_load(void) {
@@ -191,6 +216,8 @@ static int write_data(const struct diskfs_entry* entry) {
         }
 
         done += n;
+        progress_done++;
+        report_progress(save_percent());
     }
 
     return 1;
@@ -206,6 +233,11 @@ static int diskfs_save(void) {
     if (!plan_tree(fs_root(), "/", 1, &next)) {
         return 0;
     }
+
+    progress_total = next - DISKFS_DATA_START;
+    progress_done = 0;
+    report_progress(progress_base);
+
     if (next > ata_sector_count()) {
         kprintf("Error: the disk is full.\n");
         return 0;
@@ -315,20 +347,45 @@ static int diskfs_load(void) {
     return 1;
 }
 
-/* Lay down an empty table and superblock. */
-static void diskfs_format(void) {
+/* Write a table with no entries in it, one sector at a time so a progress
+ * hook can follow along. */
+static int write_empty_table(void) {
     memset(table, 0, sizeof(table));
-    saved_entries = 0;
-    used_sectors = 0;
 
-    if (!ata_write(1, table, DISKFS_TABLE_SECTORS) || !super_save()) {
-        kprintf("Error: the disk cannot be written.\n");
-        present = 0;
+    for (uint32_t i = 0; i < DISKFS_TABLE_SECTORS; i++) {
+        if (!ata_write(1 + i, (const uint8_t*)table + i * ATA_SECTOR_SIZE, 1)) {
+            return 0;
+        }
+
+        report_progress((int)(i + 1) * 9 / (int)DISKFS_TABLE_SECTORS);
     }
+
+    return 1;
 }
 
-int diskfs_init(void) {
+/* Lay down an empty table and superblock. */
+static int diskfs_format(void) {
+    saved_entries = 0;
+    used_sectors = 0;
+    planned = 0;
+
+    if (!write_empty_table() || !super_save()) {
+        return 0;
+    }
+
+    report_progress(10);
+
+    return 1;
+}
+
+int diskfs_probe(void) {
+    if (probed) {
+        return present;
+    }
+
+    probed = 1;
     present = 0;
+    blank = 0;
 
     if (!ata_init()) {
         kprintf(
@@ -342,32 +399,106 @@ int diskfs_init(void) {
     }
 
     present = 1;
+    blank = !super_load();
 
-    if (super_load()) {
-        if (diskfs_load()) {
-            // kprintf("Disk: %s, %d MB, %d entries restored\n", ata_model(),
-            //        (int)(ata_sector_count() / 2048), (int)saved_entries);
-            return 1;
-        }
+    return 1;
+}
 
-        kprintf("Warning: the disk file system is damaged; rebuilding it.\n");
-        fs_reset();
+int diskfs_blank(void) { return present && blank; }
+
+int diskfs_format_disk(int files, void (*progress)(int percent)) {
+    if (!diskfs_probe()) {
+        return 0;
     }
 
-    diskfs_format();
+    progress_hook = progress;
+    progress_base = 0;
+    progress_span = 100;
+    progress_done = 0;
+    progress_total = 0;
+
+    report_progress(0);
+
+    if (!diskfs_format()) {
+        kprintf("Error: the disk cannot be written.\n");
+        present = 0;
+        progress_hook = 0;
+        return 0;
+    }
+
+    if (files) {
+        progress_base = 10;
+        progress_span = 89;
+
+        if (!diskfs_save()) {
+            progress_base = 0;
+            progress_span = 100;
+            progress_hook = 0;
+            return 0;
+        }
+
+        fs_mark_clean();
+    } else {
+        report_progress(99);
+    }
+
+    blank = 0;
+    report_progress(100);
+
+    progress_base = 0;
+    progress_span = 100;
+    progress_hook = 0;
+
+    return 1;
+}
+
+int diskfs_write_tree(void (*progress)(int percent)) {
     if (!present) {
         return 0;
     }
 
+    progress_hook = progress;
+    progress_base = 0;
+    progress_span = 99;
+    progress_done = 0;
+    progress_total = 0;
+
+    report_progress(0);
+
     if (!diskfs_save()) {
-        kprintf("Error: the file system could not be written.\n");
+        progress_hook = 0;
         return 0;
     }
 
     fs_mark_clean();
-    
-    //kprintf("Disk: %s, %d MB, file system created\n", ata_model(),
-    //        (int)(ata_sector_count() / 2048));
+    blank = 0;
+    report_progress(100);
+
+    progress_base = 0;
+    progress_span = 100;
+    progress_hook = 0;
+
+    return 1;
+}
+
+int diskfs_init(void) {
+    if (!diskfs_probe()) {
+        return 0;
+    }
+
+    if (!blank && diskfs_load()) {
+        return 1;
+    }
+
+    if (!blank) {
+        kprintf("Warning: the disk file system is damaged; rebuilding it.\n");
+        fs_reset();
+    }
+
+    if (!diskfs_format_disk(1, 0)) {
+        kprintf("Error: the file system could not be written.\n");
+        return 0;
+    }
 
     return 1;
 }

@@ -7,6 +7,8 @@
 #define KEY_LEFT 0x102
 #define KEY_RIGHT 0x103
 
+#define KEY_ESC 0x104
+
 #define KEY_CTRL_E 0x05
 #define KEY_CTRL_R 0x12
 #define KEY_CTRL_S 0x13

@@ -14,6 +14,7 @@
 #include "libc.h"
 #include "paging.h"
 #include "pmm.h"
+#include "power.h"
 #include "scheduler.h"
 #include "screen.h"
 #include "shell.h"
@@ -226,41 +227,14 @@ static int parse_digits(const char* text, int at, int count, int* value) {
     return 1;
 }
 
-/* Power off the machine through the ACPI "S5" (soft off) state. */
+/* Say goodbye, then power the machine off. */
 static void command_shutdown(void) {
-    outw(0x604, 0x2000);   // QEMU / KVM
-    outw(0xB004, 0x2000);  // Bochs / older QEMU
-    outw(0x4004, 0x3400);  // VirtualBox
-
     print("It is now safe to turn off your computer.\n");
-
-    for (;;) {
-        __asm__ volatile("hlt");
-    }
+    power_shutdown();
 }
 
 /* Restart the machine. */
-static void command_reboot(void) {
-    // Wait for the controller to be ready: bit 1 of port 0x64 = input buffer
-    // full.
-    while ((inb(0x64) & 0x02) != 0) {
-    }
-
-    outb(0x64, 0xFE);  // pulse the CPU reset line
-
-    // The controller ignored us: force a triple fault instead.
-    struct {
-        uint16_t limit;
-        uint32_t base;
-    } __attribute__((packed)) empty_idt = {0, 0};
-
-    __asm__ volatile("lidt %0" : : "m"(empty_idt));
-    __asm__ volatile("int $0");
-
-    for (;;) {
-        __asm__ volatile("hlt");
-    }
-}
+static void command_reboot(void) { power_reboot(); }
 
 /* Look under "node" for names holding "pattern", printing the path of
  * each match; returns how many were found. */
