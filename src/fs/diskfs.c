@@ -56,6 +56,11 @@ static uint8_t sector_buffer[ATA_SECTOR_SIZE];
 static int present = 0;
 static int probed = 0;
 static int blank = 0;
+
+// Cleared when the disk holds a file system that could not be read. Nothing
+// may be written over it then: whatever is there is still the user's data, and
+// the in-memory tree stays in RAM until the disk is formatted on purpose.
+static int writable = 0;
 static uint32_t saved_entries = 0;
 static uint32_t used_sectors = 0;
 static uint32_t planned = 0;
@@ -142,12 +147,18 @@ static int plan_tree(struct fs_node* dir, const char* path, uint32_t len,
         child_len += name_len;
 
         if (child_len >= DISKFS_PATH_MAX) {
-            kprintf("Error: the path of %s is too long.\n", child->name);
+            kprintf(
+                "Error: the path of %s does not fit the %d bytes an entry "
+                "holds; nothing was saved.\n",
+                child->name, DISKFS_PATH_MAX - 1);
             return 0;
         }
 
         if (planned == DISKFS_ENTRY_CAPACITY) {
-            kprintf("Error: the disk file table is full.\n");
+            kprintf(
+                "Error: the disk file table holds %d entries and is full; "
+                "nothing was saved.\n",
+                DISKFS_ENTRY_CAPACITY);
             return 0;
         }
 
@@ -413,6 +424,9 @@ int diskfs_format_disk(int files, void (*progress)(int percent)) {
         return 0;
     }
 
+    // The disk holds a usable file system again, so writing to it is allowed.
+    writable = 1;
+
     if (files) {
         // The table is written; the file data takes the rest of the bar.
         progress_base = 10;
@@ -445,6 +459,12 @@ int diskfs_write_tree(void (*progress)(int percent)) {
     if (!present) {
         return 0;
     }
+    if (!writable) {
+        kprintf(
+            "Error: the disk file system is not readable; nothing was "
+            "written over it.\n");
+        return 0;
+    }
 
     progress_hook = progress;
     progress_base = 0;
@@ -470,19 +490,26 @@ int diskfs_write_tree(void (*progress)(int percent)) {
     return 1;
 }
 
-/* Mount the disk file system, formatting the disk when it has none. */
+/* Mount the disk file system; a blank disk is formatted and given the tree. */
 int diskfs_init(void) {
     if (!diskfs_probe()) {
         return 0;
     }
 
-    if (!blank && diskfs_load()) {
-        return 1;
-    }
-
     if (!blank) {
-        kprintf("Warning: the disk file system is damaged; rebuilding it.\n");
-        fs_reset();
+        if (diskfs_load()) {
+            writable = 1;
+            return 1;
+        }
+
+        // The disk holds something that could not be read back. Formatting it
+        // here would throw the user's files away for the sake of a clean boot,
+        // so the disk is left exactly as it is and this session works in RAM.
+        kprintf(
+            "Warning: the disk file system could not be read. It was left "
+            "untouched and this session will not write to it.\n");
+
+        return 0;
     }
 
     if (!diskfs_format_disk(1, 0)) {
@@ -500,6 +527,12 @@ int diskfs_sync(void) {
     }
     if (!fs_dirty()) {
         return 1;
+    }
+    if (!writable) {
+        kprintf(
+            "Error: the disk file system could not be read, so nothing was "
+            "written over it. The changes are in RAM only.\n");
+        return 0;
     }
 
     if (!diskfs_save()) {

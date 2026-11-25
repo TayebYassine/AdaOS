@@ -50,11 +50,15 @@ struct as_token {
     char text[AS_LINE_MAX];
 };
 
-/* Lexer state: the source string, the read position and the current token. */
+/* Lexer state: the source string, the read position, the current token and
+ * how deep the parser currently is inside brackets. The depth is carried here
+ * because the parser is recursive and a script could otherwise nest far enough
+ * to run off a task stack. */
 struct as_lexer {
     const char* src;
     int pos;
     struct as_token cur;
+    int depth;
 };
 
 /* Advance lexer to next token. */

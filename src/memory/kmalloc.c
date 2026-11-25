@@ -53,29 +53,50 @@ void kmalloc_init(void) {
 
 /* Add fresh space to the heap and make it one free block; 0 on success. */
 static int heap_grow(uint32_t bytes) {
-    uint32_t want = align_up(bytes, HEAP_ALIGNMENT);
+    // The new stretch carries a block header of its own, so the space asked
+    // for has to cover the header as well. Without that, a request for
+    // exactly one grow step would be handed a block that is one header too
+    // small and could never be satisfied.
+    uint32_t want = align_up(bytes + sizeof(struct heap_block), HEAP_ALIGNMENT);
+    uint32_t base;
+    uint32_t offset = 0;
+    struct heap_block* block;
 
     if (want < HEAP_GROW_BYTES) {
         want = HEAP_GROW_BYTES;
     }
     want = align_up(want, PMM_PAGE_SIZE);
 
-    uint32_t base = HEAP_BASE + heap_mapped;
+    base = HEAP_BASE + heap_mapped;
 
-    for (uint32_t offset = 0; offset < want; offset += PMM_PAGE_SIZE) {
+    for (; offset < want; offset += PMM_PAGE_SIZE) {
         uint32_t frame = pmm_alloc_page();
 
         if (frame == 0) {
-            return -1;
+            break;
         }
 
         if (paging_map_page(base + offset, frame, PAGE_WRITABLE) != 0) {
             pmm_free_page(frame);
-            return -1;
+            break;
         }
     }
 
-    struct heap_block* block = (struct heap_block*)(base);
+    if (offset < want) {
+        // Undo the pages already mapped, so a failed grow costs nothing and
+        // the next attempt starts where this one did.
+        for (uint32_t at = 0; at < offset; at += PMM_PAGE_SIZE) {
+            uint32_t frame = paging_unmap_page(base + at);
+
+            if (frame != 0) {
+                pmm_free_page(frame);
+            }
+        }
+
+        return -1;
+    }
+
+    block = (struct heap_block*)(base);
     block->size = want - sizeof(struct heap_block);
     block->free = 1;
     block->next = 0;
@@ -134,7 +155,9 @@ static void* take_block(uint32_t need) {
 
 /* Allocate "size" bytes, or 0 when the heap cannot grow. */
 void* kmalloc(size_t size) {
-    if (size == 0) {
+    // A size this large could not be rounded up, or have a block header
+    // added to it in heap_grow(), without wrapping.
+    if (size == 0 || size > 0x7FFF0000u) {
         return 0;
     }
 
@@ -162,16 +185,44 @@ void* kmalloc(size_t size) {
     return result;
 }
 
+/* Is "block" one of the headers in this heap's list? */
+static struct heap_block* known_block(struct heap_block* block) {
+    for (struct heap_block* cur = first_block; cur != 0; cur = cur->next) {
+        if (cur == block) {
+            return cur;
+        }
+
+        // A damaged list would walk for ever; stop as soon as a link does
+        // not move forward.
+        if (cur->next != 0 && cur->next <= cur) {
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
 /* Give an allocation back and merge it with free neighbours. */
 void kfree(void* ptr) {
     if (ptr == 0) {
         return;
     }
 
+    uint32_t address = (uint32_t)ptr;
     struct heap_block* block =
         (struct heap_block*)((uint8_t*)ptr - sizeof(struct heap_block));
 
     spinlock_acquire(&heap_lock);
+
+    // Only a pointer this heap really handed out may be freed. A stray or
+    // already-freed one would otherwise write its flag into whatever memory
+    // it happens to point at, and corrupt the block list on the way out.
+    if (address < HEAP_BASE || address >= HEAP_BASE + heap_mapped ||
+        (address & (HEAP_ALIGNMENT - 1)) != 0 || known_block(block) == 0 ||
+        block->free) {
+        spinlock_release(&heap_lock);
+        return;
+    }
 
     block->free = 1;
 

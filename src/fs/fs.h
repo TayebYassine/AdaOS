@@ -11,8 +11,11 @@
 
 /* Longest name one file or directory may have. */
 #define FS_NAME_MAX 28  // including the ending '\0'
-/* Longest absolute path, current directory included. */
-#define FS_PATH_MAX 128  // including the ending '\0'
+/* Longest absolute path, current directory included. This matches the 112
+ * bytes a disk entry reserves for a path, so anything the tree accepts can also
+ * be written out; a longer one would be created happily in RAM and then be
+ * impossible to save. */
+#define FS_PATH_MAX 112  // including the ending '\0'
 
 /* What a node in the tree holds. */
 enum fs_kind {

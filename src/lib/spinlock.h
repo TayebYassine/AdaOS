@@ -21,4 +21,10 @@ void spinlock_acquire(struct spinlock* lock);
 /* Release the lock and restore the interrupt state from before it. */
 void spinlock_release(struct spinlock* lock);
 
+/* Release every lock still held, newest first, and leave interrupts off. The
+ * scheduler calls this when a task dies: a task that faults inside a critical
+ * section would otherwise leave the lock set for ever, and every other task
+ * would spin on it with interrupts already off. */
+void spinlock_release_all_held(void);
+
 #endif /* ADAOS_SPINLOCK_H */

@@ -20,7 +20,9 @@ void as_lexer_next(struct as_lexer* lex) {
         (c == '0' &&
          (lex->src[lex->pos + 1] == 'x' || lex->src[lex->pos + 1] == 'X'))) {
         int hex = 0;
-        int32_t val = 0;
+        // Accumulate unsigned: a long run of digits must wrap quietly rather
+        // than overflow a signed value, which is undefined behaviour.
+        uint32_t val = 0;
 
         if (c == '0' &&
             (lex->src[lex->pos + 1] == 'x' || lex->src[lex->pos + 1] == 'X')) {
@@ -31,13 +33,14 @@ void as_lexer_next(struct as_lexer* lex) {
         while (1) {
             char ch = lex->src[lex->pos];
             if (ch >= '0' && ch <= '9') {
-                val = hex ? (val * 16 + (ch - '0')) : (val * 10 + (ch - '0'));
+                val = hex ? (val * 16u + (uint32_t)(ch - '0'))
+                          : (val * 10u + (uint32_t)(ch - '0'));
                 lex->pos++;
             } else if (hex && ch >= 'a' && ch <= 'f') {
-                val = val * 16 + (ch - 'a' + 10);
+                val = val * 16u + (uint32_t)(ch - 'a' + 10);
                 lex->pos++;
             } else if (hex && ch >= 'A' && ch <= 'F') {
-                val = val * 16 + (ch - 'A' + 10);
+                val = val * 16u + (uint32_t)(ch - 'A' + 10);
                 lex->pos++;
             } else {
                 break;
@@ -45,8 +48,8 @@ void as_lexer_next(struct as_lexer* lex) {
         }
 
         lex->cur.kind = TOK_INT;
-        lex->cur.int_val = val;
-        itoa(val, lex->cur.text);
+        lex->cur.int_val = (int32_t)val;
+        itoa((int32_t)val, lex->cur.text);
         return;
     }
 

@@ -57,6 +57,11 @@ static uint8_t colors[LINE_SIZE];  // colour of each character of a line
 static char path[FS_PATH_MAX];
 static char title[FS_NAME_MAX];
 
+// Set when the file on disk did not fit MAX_LINES/LINE_MAX and part of it was
+// dropped on the way in. Writing the buffer back would then lose the rest of
+// the file, so saving is refused while this is set.
+static int truncated = 0;
+
 static uint32_t line_count = 1;
 static uint32_t cursor_line = 0;
 static uint32_t cursor_col = 0;
@@ -376,6 +381,8 @@ static void draw_status(void) {
 
     if (note[0] != '\0') {
         screen_puts_at(SCREEN_ROWS - 1, 24, note, COLOR_BAR);
+    } else if (truncated) {
+        screen_puts_at(SCREEN_ROWS - 1, 24, "file too large to edit", COLOR_BAR);
     }
 }
 
@@ -411,6 +418,7 @@ static void render(void) {
 /* Split the file into lines; a final newline starts an empty last line. */
 static void load_file(const struct fs_node* node) {
     line_count = 1;
+    truncated = 0;
     line_at(0)[0] = '\0';
 
     if (node == 0 || node->data == 0) {
@@ -428,6 +436,7 @@ static void load_file(const struct fs_node* node) {
 
         if (c == '\n') {
             if (line_count == MAX_LINES) {
+                truncated = 1;
                 break;
             }
 
@@ -442,15 +451,27 @@ static void load_file(const struct fs_node* node) {
         if (length < LINE_MAX) {
             line[length] = c;
             line[length + 1] = '\0';
+        } else {
+            truncated = 1;
         }
     }
 }
 
 /* Copy the buffer into the file. Returns 1 on success. */
 static int save_file(void) {
-    uint32_t size = total_bytes();
-    char* buffer = (char*)kmalloc(size + 1);
+    uint32_t size;
+    char* buffer;
     uint32_t pos = 0;
+
+    // The buffer only holds MAX_LINES lines of LINE_MAX characters; writing it
+    // over a file that was cut short on load would throw the rest away.
+    if (truncated) {
+        memcpy(note, "too large: not saved", 21);
+        return 0;
+    }
+
+    size = total_bytes();
+    buffer = (char*)kmalloc(size + 1);
 
     if (buffer == 0) {
         memcpy(note, "out of memory", 14);

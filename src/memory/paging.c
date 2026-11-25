@@ -2,8 +2,10 @@
 
 #include <stdint.h>
 
+#include "kprintf.h"
 #include "libc.h"
 #include "pmm.h"
+#include "screen.h"
 
 /* How much low memory the identity map covers: 64 MiB. */
 #define PAGING_IDENTITY_LIMIT (64u * 1024u * 1024u)
@@ -72,6 +74,35 @@ int paging_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
     return 0;
 }
 
+/* Drop the mapping for one virtual page; returns the frame it used, or 0. */
+uint32_t paging_unmap_page(uint32_t virt) {
+    uint32_t* table = table_for(virt, 0);
+    uint32_t* entry;
+    uint32_t frame;
+
+    if (table == 0) {
+        return 0;
+    }
+
+    entry = &table[(virt >> 12) & 0x3FF];
+
+    if ((*entry & PAGE_PRESENT) == 0) {
+        return 0;
+    }
+
+    frame = *entry & 0xFFFFF000u;
+    *entry = 0;
+
+    // The CPU may still hold the old translation in its TLB.
+    __asm__ volatile("invlpg (%0)" : : "r"(virt) : "memory");
+
+    if (stats.mapped_pages > 0) {
+        stats.mapped_pages--;
+    }
+
+    return frame;
+}
+
 /* Identity-map low memory and turn paging on. */
 void paging_init(void) {
     const struct pmm_stats* memory = pmm_get_stats();
@@ -89,7 +120,16 @@ void paging_init(void) {
     limit &= 0xFFFFF000u;
 
     if (limit == 0) {
-        return;
+        // Nothing usable was reported, so there is no memory to map and no
+        // memory to run on. Carrying on would leave paging off while the
+        // heap believed its pages were mapped, so stop here instead of
+        // corrupting whatever the first allocation touched.
+        kprintf("AdaOS: the bootloader reported no usable memory.\n");
+        print("System halted.\n");
+
+        for (;;) {
+            __asm__ volatile("hlt");
+        }
     }
 
     for (uint32_t addr = 0; addr < limit; addr += PMM_PAGE_SIZE) {

@@ -486,29 +486,62 @@ int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                 }
                 arr_name[an_len] = '\0';
 
-                struct as_var* arr_var = as_env_lookup(env, arr_name);
+                struct as_var* arr_var;
+                struct as_var* iter_var;
+                int total_elems;
+
+                // "for x in x" would hand the array's own storage back to
+                // as_value_copy, which frees the old value first: the loop
+                // would then walk memory it had already given away.
+                if (strcmp(var_name, arr_name) == 0) {
+                    as_errorf(env,
+                              "'%s' cannot be both the loop variable and the "
+                              "array it walks.",
+                              var_name);
+                    i = done_line + 1;
+                    continue;
+                }
+
+                arr_var = as_env_lookup(env, arr_name);
                 if (arr_var == 0 || arr_var->val.type != AS_TYPE_ARRAY) {
                     as_errorf(env, "'%s' is not an array.", arr_name);
                     i = done_line + 1;
                     continue;
                 }
 
-                struct as_var* iter_var = as_env_lookup(env, var_name);
+                iter_var = as_env_lookup(env, var_name);
                 if (iter_var == 0) {
                     iter_var = as_env_define(
                         env, var_name, arr_var->val.elem_type, AS_TYPE_VOID);
                 }
+                if (iter_var == 0) {
+                    as_errorf(env, "cannot define '%s'.", var_name);
+                    i = done_line + 1;
+                    continue;
+                }
 
-                int total_elems = arr_var->val.u.arr.count;
+                total_elems = arr_var->val.u.arr.count;
                 env->loop_depth++;
                 for (int k = 0; k < total_elems; k++) {
-                    if (arr_var->val.type != AS_TYPE_ARRAY ||
-                        arr_var->val.u.arr.items == 0 ||
-                        k >= arr_var->val.u.arr.count) {
+                    // Look both names up again every pass: the body may have
+                    // deleted or redefined either of them, and the cached
+                    // pointers would then point at freed memory.
+                    struct as_var* live_arr = as_env_lookup(env, arr_name);
+                    struct as_var* live_iter = as_env_lookup(env, var_name);
+
+                    if (live_arr == 0 || live_arr->val.type != AS_TYPE_ARRAY ||
+                        live_arr->val.u.arr.items == 0 ||
+                        k >= live_arr->val.u.arr.count) {
+                        break;
+                    }
+                    if (live_iter == 0) {
+                        as_errorf(env, "'%s' went away during the loop.",
+                                  var_name);
                         break;
                     }
 
-                    as_value_copy(&iter_var->val, &arr_var->val.u.arr.items[k]);
+                    as_value_copy(&live_iter->val,
+                                  &live_arr->val.u.arr.items[k]);
                     as_exec_block(env, lines, i + 1, done_line - 1);
 
                     if (env->error) break;
@@ -530,6 +563,11 @@ int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                 if (iter_var == 0) {
                     iter_var = as_env_define(env, var_name, AS_TYPE_INT32,
                                              AS_TYPE_VOID);
+                }
+                if (iter_var == 0) {
+                    as_errorf(env, "cannot define counter '%s'.", var_name);
+                    i = done_line + 1;
+                    continue;
                 }
 
                 char start_expr[AS_LINE_MAX];

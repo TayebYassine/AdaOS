@@ -196,7 +196,9 @@ void keyboard_init(void) { interrupt_register_irq(1, keyboard_irq); }
 
 /* Take the oldest key out of the buffer, or 0 if there is none. */
 static int buffer_pop(void) {
-    interrupt_disable();
+    // Put the flags back the way they were rather than always enabling
+    // interrupts: a caller that had them off (or holds a lock) must stay off.
+    interrupt_flags flags = interrupt_save();
 
     int key = 0;
 
@@ -206,7 +208,7 @@ static int buffer_pop(void) {
         key_buffer_count--;
     }
 
-    interrupt_enable();
+    interrupt_restore(flags);
     return key;
 }
 

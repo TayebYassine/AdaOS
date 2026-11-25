@@ -14,7 +14,8 @@
 #define PIC_EOI 0x20  // end-of-interrupt command byte
 
 /* The slave PIC must be reachable through IRQ2 on the master. */
-#define PIC_SLAVE_IRQ 0x04
+#define PIC_SLAVE_LINE 2
+#define PIC_SLAVE_IRQ (1u << PIC_SLAVE_LINE)  // bit 2 of ICW3
 
 /* Remap both chips to 0x20-0x2F and mask all 16 lines. */
 void pic_init(void) {
@@ -46,9 +47,11 @@ void pic_unmask(int irq) {
     uint8_t line = (uint8_t)(irq % 8);
 
     // IRQ8-15 all arrive through IRQ2 on the master, so open that line too.
+    // The mask is one bit per line, so it is bit 2 that has to be cleared -
+    // using the ICW3 value 0x04 as a shift count would clear IRQ4 instead.
     if (irq >= 8) {
         outb(PIC_MASTER_DATA,
-             inb(PIC_MASTER_DATA) & (uint8_t)~(1 << PIC_SLAVE_IRQ));
+             inb(PIC_MASTER_DATA) & (uint8_t)~(1u << PIC_SLAVE_LINE));
     }
 
     // One bit per line: 0 = let it through. Read first to keep the others.

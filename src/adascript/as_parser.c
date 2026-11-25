@@ -21,6 +21,35 @@ static struct as_value as_parse_unary(struct as_env* env, struct as_lexer* lex);
 static struct as_value as_parse_primary(struct as_env* env,
                                         struct as_lexer* lex);
 
+// Brackets, arrays, len() and the unary operators all parse themselves
+// recursively, and every level costs a whole chain of stack frames. A single
+// line of script can therefore nest deep enough to run off the 16 KiB task
+// stack, so the parser counts its levels and stops before that happens.
+#define AS_MAX_NESTING 6
+
+/* Claim one nesting level; 0 (with the error set) when it is too deep. */
+static int as_nest(struct as_env* env, struct as_lexer* lex) {
+    if (lex->depth >= AS_MAX_NESTING) {
+        as_errorf(env, "the expression nests deeper than %d levels.",
+                  AS_MAX_NESTING);
+        return 0;
+    }
+
+    lex->depth++;
+    return 1;
+}
+
+/* The value a parser hands back once it has given up; the error is already
+ * set, so every caller checks env->error before using it. */
+static struct as_value as_error_value(void) {
+    struct as_value val;
+
+    as_value_init(&val, AS_TYPE_INT32, AS_TYPE_VOID);
+    val.is_null = 1;
+
+    return val;
+}
+
 /* Lowest precedence: || and or. */
 static struct as_value as_parse_or(struct as_env* env, struct as_lexer* lex) {
     struct as_value left = as_parse_and(env, lex);
@@ -122,6 +151,52 @@ static struct as_value as_parse_relational(struct as_env* env,
     return left;
 }
 
+/* "left + right" where at least one side is text: format whatever is not a
+ * string and join the two. This lives in its own function so its two line-sized
+ * buffers exist only while a join happens, instead of at every level of the
+ * recursive descent above. */
+static struct as_value as_join_text(struct as_value* left,
+                                    struct as_value* right) {
+    char b1[AS_LINE_MAX];
+    char b2[AS_LINE_MAX];
+    const char* s1;
+    const char* s2;
+    int l1;
+    int l2;
+    char* joined;
+    struct as_value result;
+
+    if (left->type == AS_TYPE_STRING && left->u.str != 0) {
+        s1 = left->u.str;
+    } else {
+        as_value_format(left, b1, sizeof(b1), 0);
+        s1 = b1;
+    }
+    if (right->type == AS_TYPE_STRING && right->u.str != 0) {
+        s2 = right->u.str;
+    } else {
+        as_value_format(right, b2, sizeof(b2), 0);
+        s2 = b2;
+    }
+
+    l1 = (int)strlen(s1);
+    l2 = (int)strlen(s2);
+    joined = (char*)kmalloc(l1 + l2 + 1);
+    if (joined != 0) {
+        memcpy(joined, s1, l1);
+        memcpy(joined + l1, s2, l2 + 1);
+    }
+
+    as_value_free(left);
+    as_value_free(right);
+
+    as_value_init(&result, AS_TYPE_STRING, AS_TYPE_VOID);
+    result.is_null = (joined == 0);
+    result.u.str = joined;
+
+    return result;
+}
+
 /* Addition and subtraction, which also joins strings. */
 static struct as_value as_parse_add(struct as_env* env, struct as_lexer* lex) {
     struct as_value left = as_parse_mul(env, lex);
@@ -132,38 +207,12 @@ static struct as_value as_parse_add(struct as_env* env, struct as_lexer* lex) {
 
         if (op == TOK_PLUS) {
             if (left.type == AS_TYPE_STRING || right.type == AS_TYPE_STRING) {
-                char b1[AS_LINE_MAX];
-                char b2[AS_LINE_MAX];
-                const char* s1;
-                const char* s2;
-
-                if (left.type == AS_TYPE_STRING && left.u.str != 0) {
-                    s1 = left.u.str;
-                } else {
-                    as_value_format(&left, b1, sizeof(b1), 0);
-                    s1 = b1;
-                }
-                if (right.type == AS_TYPE_STRING && right.u.str != 0) {
-                    s2 = right.u.str;
-                } else {
-                    as_value_format(&right, b2, sizeof(b2), 0);
-                    s2 = b2;
-                }
-
-                int l1 = (int)strlen(s1);
-                int l2 = (int)strlen(s2);
-                char* joined = (char*)kmalloc(l1 + l2 + 1);
-                if (joined != 0) {
-                    memcpy(joined, s1, l1);
-                    memcpy(joined + l1, s2, l2 + 1);
-                }
-                as_value_free(&left);
-                as_value_free(&right);
-                left.type = AS_TYPE_STRING;
-                left.is_null = (joined == 0);
-                left.u.str = joined;
+                left = as_join_text(&left, &right);
             } else {
-                int32_t sum = as_value_to_i32(&left) + as_value_to_i32(&right);
+                // Add in unsigned arithmetic: signed overflow is undefined and
+                // an -O2 build is free to do anything with it.
+                int32_t sum = (int32_t)((uint32_t)as_value_to_i32(&left) +
+                                        (uint32_t)as_value_to_i32(&right));
                 as_value_free(&left);
                 as_value_free(&right);
                 left.type = AS_TYPE_INT32;
@@ -171,7 +220,8 @@ static struct as_value as_parse_add(struct as_env* env, struct as_lexer* lex) {
                 left.u.i32 = sum;
             }
         } else {
-            int32_t diff = as_value_to_i32(&left) - as_value_to_i32(&right);
+            int32_t diff = (int32_t)((uint32_t)as_value_to_i32(&left) -
+                                     (uint32_t)as_value_to_i32(&right));
             as_value_free(&left);
             as_value_free(&right);
             left.type = AS_TYPE_INT32;
@@ -195,16 +245,22 @@ static struct as_value as_parse_mul(struct as_env* env, struct as_lexer* lex) {
         int32_t res = 0;
 
         if (op == TOK_STAR) {
-            res = a * b;
+            res = (int32_t)((uint32_t)a * (uint32_t)b);
         } else if (op == TOK_SLASH) {
             if (b == 0) {
                 as_errorf(env, "division by zero.");
+            } else if (a == INT32_MIN && b == -1) {
+                // The result does not fit and idiv would fault the CPU.
+                as_errorf(env, "integer overflow in division.");
             } else {
                 res = a / b;
             }
         } else if (op == TOK_PERCENT) {
             if (b == 0) {
                 as_errorf(env, "modulo by zero.");
+            } else if (a == INT32_MIN && b == -1) {
+                // The remainder is 0, but idiv faults before it gets there.
+                res = 0;
             } else {
                 res = a % b;
             }
@@ -222,21 +278,44 @@ static struct as_value as_parse_mul(struct as_env* env, struct as_lexer* lex) {
 static struct as_value as_parse_unary(struct as_env* env,
                                       struct as_lexer* lex) {
     if (lex->cur.kind == TOK_MINUS) {
-        as_lexer_next(lex);
-        struct as_value val = as_parse_unary(env, lex);
-        int32_t num = -as_value_to_i32(&val);
-        as_value_free(&val);
+        struct as_value val;
         struct as_value res;
+        int32_t num;
+
+        as_lexer_next(lex);
+
+        if (!as_nest(env, lex)) {
+            return as_error_value();
+        }
+
+        val = as_parse_unary(env, lex);
+        lex->depth--;
+
+        // Negating INT32_MIN overflows; wrapping is the defined answer.
+        num = (int32_t)(0u - (uint32_t)as_value_to_i32(&val));
+        as_value_free(&val);
+
         as_value_init(&res, AS_TYPE_INT32, AS_TYPE_VOID);
         res.u.i32 = num;
         return res;
     }
     if (lex->cur.kind == TOK_NOT) {
-        as_lexer_next(lex);
-        struct as_value val = as_parse_unary(env, lex);
-        int b = !as_value_is_truthy(&val);
-        as_value_free(&val);
+        struct as_value val;
         struct as_value res;
+        int b;
+
+        as_lexer_next(lex);
+
+        if (!as_nest(env, lex)) {
+            return as_error_value();
+        }
+
+        val = as_parse_unary(env, lex);
+        lex->depth--;
+
+        b = !as_value_is_truthy(&val);
+        as_value_free(&val);
+
         as_value_init(&res, AS_TYPE_BOOL, AS_TYPE_VOID);
         res.u.boolean = b;
         return res;
@@ -291,7 +370,14 @@ static struct as_value as_parse_primary(struct as_env* env,
 
     if (lex->cur.kind == TOK_LPAREN) {
         as_lexer_next(lex);
+
+        if (!as_nest(env, lex)) {
+            return as_error_value();
+        }
+
         val = as_parse_or(env, lex);
+        lex->depth--;
+
         if (lex->cur.kind == TOK_RPAREN) {
             as_lexer_next(lex);
         }
@@ -299,15 +385,24 @@ static struct as_value as_parse_primary(struct as_env* env,
     }
 
     if (lex->cur.kind == TOK_LEN) {
+        struct as_value target;
+        int len_val = 0;
+
         as_lexer_next(lex);
         if (lex->cur.kind == TOK_LPAREN) {
             as_lexer_next(lex);
         }
-        struct as_value target = as_parse_or(env, lex);
+
+        if (!as_nest(env, lex)) {
+            return as_error_value();
+        }
+
+        target = as_parse_or(env, lex);
+        lex->depth--;
+
         if (lex->cur.kind == TOK_RPAREN) {
             as_lexer_next(lex);
         }
-        int len_val = 0;
         if (target.type == AS_TYPE_STRING && target.u.str != 0) {
             len_val = (int)strlen(target.u.str);
         } else if (target.type == AS_TYPE_ARRAY) {
@@ -323,6 +418,11 @@ static struct as_value as_parse_primary(struct as_env* env,
     // Array literal; { 1, 2, 3 }
     if (lex->cur.kind == TOK_LBRACE) {
         as_lexer_next(lex);
+
+        if (!as_nest(env, lex)) {
+            return as_error_value();
+        }
+
         val.type = AS_TYPE_ARRAY;
         val.elem_type = AS_TYPE_INT32;
         val.is_null = 0;
@@ -344,6 +444,8 @@ static struct as_value as_parse_primary(struct as_env* env,
         if (lex->cur.kind == TOK_RBRACE) {
             as_lexer_next(lex);
         }
+
+        lex->depth--;
         return val;
     }
 
@@ -402,6 +504,7 @@ struct as_value as_eval_expression(struct as_env* env, const char* str) {
     struct as_lexer lex;
     lex.src = str;
     lex.pos = 0;
+    lex.depth = 0;
     as_lexer_next(&lex);
     return as_parse_or(env, &lex);
 }

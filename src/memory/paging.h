@@ -30,6 +30,11 @@ void paging_init(void);
  * region has none. flags is a PAGE_* mask; PAGE_PRESENT is implied. */
 int paging_map_page(uint32_t virt, uint32_t phys, uint32_t flags);
 
+/* Drop the mapping for one virtual page and flush the cached translation.
+ * Returns the frame it used to point at, or 0 when nothing was mapped there,
+ * so the caller can give that frame back to the allocator. */
+uint32_t paging_unmap_page(uint32_t virt);
+
 /* What paging_init() and later mappings have done, for display. */
 const struct paging_stats* paging_get_stats(void);
 

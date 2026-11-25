@@ -7,6 +7,7 @@
 #include "kprintf.h"
 #include "libc.h"
 #include "shell.h"
+#include "spinlock.h"
 #include "timer.h"
 
 /* Tasks the scheduler can hold. The shell and the idle task are two. */
@@ -194,6 +195,10 @@ static int next_runnable(int index) {
  * is not freed here - this code still stands on it - but by the next tick. */
 static void retire_and_switch(struct task* dying) {
     dying->state = TASK_DEAD;
+
+    // A task that faulted inside a critical section still holds its locks.
+    // Nobody else could ever take them now, so hand them back before leaving.
+    spinlock_release_all_held();
 
     int index = next_runnable(current_index);
 
