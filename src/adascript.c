@@ -2010,7 +2010,10 @@ static int as_parse_whole_number(const char* text, int* negative,
     return 1;
 }
 
-/* Explain what input expects, then let the user try again. */
+/*
+ * Explain what input expects, then let the user try again. The message ends
+ * without a newline so the next attempt is typed on this same line.
+ */
 static void as_input_expect(enum as_type type, int32_t lo, uint32_t hi,
                             uint32_t min_len, uint32_t max_len) {
     char low[16];
@@ -2024,15 +2027,15 @@ static void as_input_expect(enum as_type type, int32_t lo, uint32_t hi,
 
         if (min_len == 0) {
             kprintf(
-                "Error: Invalid input. Use at most %s characters. Try again.\n",
+                "Error: Invalid input. Use at most %s characters. Try again. ",
                 max_buf);
         } else if (min_len == max_len) {
             kprintf(
-                "Error: Invalid input. Use exactly %s characters. Try again.\n",
+                "Error: Invalid input. Use exactly %s characters. Try again. ",
                 min_buf);
         } else {
             kprintf(
-                "Error: Invalid input. Use %s to %s characters. Try again.\n",
+                "Error: Invalid input. Use %s to %s characters. Try again. ",
                 min_buf, max_buf);
         }
         return;
@@ -2040,7 +2043,7 @@ static void as_input_expect(enum as_type type, int32_t lo, uint32_t hi,
 
     itoa(lo, low);
     utoa(hi, high);
-    kprintf("Error: Invalid input. Enter a number from %s to %s. Try again.\n",
+    kprintf("Error: Invalid input. Enter a number from %s to %s. Try again. ",
             low, high);
 }
 
@@ -2291,16 +2294,13 @@ static void as_exec_input(struct as_env* env, const char* stmt) {
     char input_line[SHELL_LINE_MAX];
     int negative = 0;
     uint32_t magnitude = 0;
-    int retry = 0;
+
+    if (prompt[0] != '\0') {
+        print(prompt);
+    }
 
     for (;;) {
-        if (prompt[0] != '\0') {
-            print(prompt);
-        } else if (retry) {
-            print("> ");
-        }
         shell_read_line(input_line);
-        retry = 1;
 
         if (type == AS_TYPE_STRING) {
             int len = (int)strlen(input_line);

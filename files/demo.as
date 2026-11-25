@@ -56,7 +56,7 @@ print "Working directory:", pwd endl
 
 # User input
 print "How old are you (0 to 127)? "
-input a typeof int8
+input a typeof uint8
 print "What is your name (1 to 10 characters)? "
 input b typeof string range 1 10
 print "Pick a port (0 to 65535): "
