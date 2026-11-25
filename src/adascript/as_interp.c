@@ -5,6 +5,7 @@
 #include "as_error.h"
 #include "as_input.h"
 #include "as_parser.h"
+#include "as_screen.h"
 #include "as_value.h"
 #include "libc.h"
 #include "screen.h"
@@ -461,6 +462,27 @@ static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
             (stmt[5] == ' ' || stmt[5] == '\t' || stmt[5] == ';' ||
              stmt[5] == '\0')) {
             as_exec_input(env, stmt);
+            i++;
+            continue;
+        }
+
+        if (strncmp(stmt, "mode", 4) == 0 &&
+            (stmt[4] == ' ' || stmt[4] == '\0')) {
+            as_exec_mode(env, stmt);
+            i++;
+            continue;
+        }
+
+        if (strncmp(stmt, "writecell", 9) == 0 &&
+            (stmt[9] == ' ' || stmt[9] == '\0')) {
+            as_exec_writecell(env, stmt);
+            i++;
+            continue;
+        }
+
+        if (strncmp(stmt, "erasecell", 9) == 0 &&
+            (stmt[9] == ' ' || stmt[9] == '\0')) {
+            as_exec_erasecell(env, stmt);
             i++;
             continue;
         }

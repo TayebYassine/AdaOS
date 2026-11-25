@@ -51,6 +51,11 @@ uint16_t screen_cell(int row, int col);
 /* Fill a whole row with one character and colour. */
 void screen_fill_row(int row, char c, uint8_t attribute);
 
+/* Fill a rectangle of cells, corners included; the corners may be given in
+ * any order and anything outside the screen is clipped away. */
+void screen_fill_rect(int row1, int col1, int row2, int col2, char c,
+                      uint8_t attribute);
+
 /* Draw a string on one row, stopping at the right edge of the screen. */
 void screen_puts_at(int row, int col, const char* text, uint8_t attribute);
 
@@ -60,6 +65,12 @@ void screen_move_to(int row, int col);
 /* Keep the top "rows" rows out of print()'s way: the cursor goes below them and
  * scrolling stops there instead of at the top edge. */
 void screen_set_top(int rows);
+
+/* How many top rows print() currently leaves alone. */
+int screen_get_top(void);
+
+/* Show or hide the blinking hardware cursor. */
+void screen_set_cursor_visible(int visible);
 
 /* Copy the text buffer into "cells" and remember the cursor. */
 void screen_save(uint16_t* cells, int* row, int* col);

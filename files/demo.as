@@ -1,4 +1,8 @@
 # AdaScript Demonstration Script
+#
+# This script runs on the normal command-line screen. Screen mode, which draws
+# on a cleared screen and puts the shell back afterwards, is shown in screen.as.
+mode cli
 
 # Variables and types
 define a: int8 = 14

@@ -5,6 +5,7 @@
 #include "as_common.h"
 #include "as_env.h"
 #include "as_interp.h"
+#include "as_screen.h"
 #include "as_value.h"
 #include "fs.h"
 #include "kmalloc.h"
@@ -141,8 +142,15 @@ int adascript_run_string(const char* script) {
     env.error_text[0] = '\0';
     env.cur_line = 0;
     env.cur_col = 0;
+    env.screen_mode = 0;
+    env.saved_cells = 0;
+    env.saved_row = 0;
+    env.saved_col = 0;
+    env.saved_top = 0;
 
     int result = as_exec_block(&env, lines, 0, total - 1);
+
+    as_screen_finish(&env);
 
     as_env_cleanup(&env);
     kfree(script_copy);

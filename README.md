@@ -58,6 +58,8 @@ This operating system has most of the important features, such as file managemen
 
   If you've accepted sample files on setup, run the command `ls` or `tree` to see a file named demo.as. This file contains every instruction added into the script language. Use the command `write demo.as` to edit it and use `run demo.as` to execute it.
 
+  A script can also draw on the whole screen: `mode screen` saves the shell's screen, clears it, and gives the script all 80x25 cells; `writecell <row> <column> <text> [color <name>]` writes at one cell, and `erasecell <row> <column>` or `erasecell <row> <column> <row> <column>` clears a cell or a rectangle. The shell's screen comes back automatically when the script ends, and `mode cli` gives it back early. The sample `screen.as` demonstrates all of it.
+
   <img src="./assets/adascript.gif" />
 </details>
 

@@ -29,6 +29,11 @@ struct as_env {
     char error_text[AS_LINE_MAX];  // and how to explain it
     int cur_line;                  // the statement being run, kept up
     int cur_col;                   // to date by as_exec_block()
+    int screen_mode;  // the run owns the screen and must give it back
+    uint16_t* saved_cells;  // the shell's text cells while it does
+    int saved_row;          // and the cursor, top row and cursor visibility
+    int saved_col;
+    int saved_top;
 };
 
 /* Find a variable by name in the environment. */

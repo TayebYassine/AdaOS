@@ -16,6 +16,9 @@
 #define CRTC_CURSOR_START 0x0A
 #define CRTC_CURSOR_END 0x0B
 
+/* Cursor start value that turns the hardware cursor off (bit 5). */
+#define CRTC_CURSOR_OFF 0x20
+
 /* CRT controller ports in colour text mode. */
 #define CRTC_INDEX_PORT 0x3D4
 #define CRTC_DATA_PORT 0x3D5
@@ -211,6 +214,12 @@ static void update_cursor(void) {
     outb(CRTC_DATA_PORT, (uint8_t)(position & 0xFF));
 }
 
+/* Show or hide the blinking hardware cursor. */
+void screen_set_cursor_visible(int visible) {
+    outb(CRTC_INDEX_PORT, CRTC_CURSOR_START);
+    outb(CRTC_DATA_PORT, visible ? 0x0E : CRTC_CURSOR_OFF);
+}
+
 /* Give the hardware cursor its shape: a blinking underscore. */
 void screen_init(void) {
     outb(CRTC_INDEX_PORT, CRTC_CURSOR_START);
@@ -301,6 +310,9 @@ void screen_set_top(int rows) {
     }
 }
 
+/* How many top rows print() currently leaves alone. */
+int screen_get_top(void) { return top_row; }
+
 /* Print a string at the cursor. */
 void print(const char* s) {
     for (int i = 0; s[i] != '\0'; i++) {
@@ -356,6 +368,44 @@ void screen_fill_row(int row, char c, uint8_t attribute) {
 
     fill_cells((volatile uint16_t*)VGA_MEMORY + cell_index(row, 0), SCREEN_COLS,
                ((uint16_t)attribute << 8) | (uint8_t)c);
+}
+
+/* Fill a rectangle of cells, corners included. */
+void screen_fill_rect(int row1, int col1, int row2, int col2, char c,
+                      uint8_t attribute) {
+    uint16_t value = ((uint16_t)attribute << 8) | (uint8_t)c;
+
+    if (row1 > row2) {
+        int swap = row1;
+        row1 = row2;
+        row2 = swap;
+    }
+    if (col1 > col2) {
+        int swap = col1;
+        col1 = col2;
+        col2 = swap;
+    }
+
+    if (row1 < 0) {
+        row1 = 0;
+    }
+    if (col1 < 0) {
+        col1 = 0;
+    }
+    if (row2 >= SCREEN_ROWS) {
+        row2 = SCREEN_ROWS - 1;
+    }
+    if (col2 >= SCREEN_COLS) {
+        col2 = SCREEN_COLS - 1;
+    }
+    if (row1 > row2 || col1 > col2) {
+        return;
+    }
+
+    for (int row = row1; row <= row2; row++) {
+        fill_cells((volatile uint16_t*)VGA_MEMORY + cell_index(row, col1),
+                   col2 - col1 + 1, value);
+    }
 }
 
 /* Draw a string on one row, clipped at the right edge. */
