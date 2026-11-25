@@ -983,6 +983,33 @@ static int entry_path(const struct tar_header* header, char* out) {
     return 1;
 }
 
+/* An archive may not step out of the tree it fills: an entry named
+ * "../../x" would otherwise land at "/x", outside where it belongs. */
+static int entry_name_safe(const char* path) {
+    const char* p = path;
+
+    while (*p != '\0') {
+        const char* start;
+        int len;
+
+        while (*p == '/') {
+            p++;
+        }
+
+        start = p;
+        while (*p != '\0' && *p != '/') {
+            p++;
+        }
+
+        len = (int)(p - start);
+        if (len == 2 && start[0] == '.' && start[1] == '.') {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 /* Is this block all zeroes, i.e. the end of the archive? */
 static int tar_is_empty(const unsigned char* block) {
     for (uint32_t i = 0; i < TAR_BLOCK; i++) {
@@ -997,9 +1024,17 @@ static int tar_is_empty(const unsigned char* block) {
 /* Unpack one archive. Returns how many files it added. */
 static int load_tar(uint32_t start, uint32_t end) {
     const unsigned char* data = (const unsigned char*)start;
-    uint32_t total = end - start;
+    uint32_t total;
     uint32_t offset = 0;
     int files = 0;
+
+    // An end that does not follow its start would wrap "total" and turn the
+    // archive into a walk over memory the kernel was never given.
+    if (end <= start) {
+        return 0;
+    }
+
+    total = end - start;
 
     if (total < TAR_BLOCK) {
         return 0;
@@ -1029,6 +1064,10 @@ static int load_tar(uint32_t start, uint32_t end) {
 
         if (!entry_path(header, path)) {
             kprintf("File System: initrd entry has too long a name\n");
+        } else if (!entry_name_safe(path)) {
+            kprintf(
+                "File System: an initrd entry names a \"..\" path and was "
+                "skipped\n");
         } else if (header->typeflag == '5') {
             mkdir_tree(path);
         } else if (header->typeflag == '0' || header->typeflag == '\0') {
@@ -1058,11 +1097,22 @@ int fs_load_module(uint32_t magic, uint32_t info_addr) {
         return 0;
     }
 
+    // The module list is bootloader data: a count or a range that cannot be
+    // right must not be walked, because both would read memory the kernel was
+    // never told about.
+    if (info->mods_count > 64) {
+        print("File System: the boot module list is not usable.\n");
+        return 0;
+    }
+
     mods = (struct multiboot_module*)info->mods_addr;
 
     spinlock_acquire(&tree_lock);
 
     for (uint32_t i = 0; i < info->mods_count; i++) {
+        if (mods[i].mod_end <= mods[i].mod_start) {
+            continue;
+        }
         files += load_tar(mods[i].mod_start, mods[i].mod_end);
     }
 

@@ -153,9 +153,24 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
         uint32_t cursor = info->mmap_addr;
         uint32_t map_end = info->mmap_addr + info->mmap_length;
 
+        // A length that wraps past 4 GiB describes a map that cannot exist;
+        // the per-entry checks below still keep the walk inside memory.
+        if (map_end < cursor) {
+            map_end = 0xFFFFFFFFu;
+        }
+
         while (cursor < map_end) {
             struct multiboot_mmap_entry* entry =
                 (struct multiboot_mmap_entry*)cursor;
+            uint32_t remaining = map_end - cursor;
+
+            // Each entry is a 4-byte size field plus at least 20 bytes, and
+            // must lie inside the map that was described. Anything else is a
+            // malformed map, so stop rather than read past its end.
+            if (entry->size < 20 || remaining < 24 ||
+                entry->size > remaining - 4) {
+                break;
+            }
 
             stats.region_count++;
 
@@ -167,10 +182,6 @@ void pmm_init(uint32_t magic, uint32_t info_addr) {
                 }
             }
 
-            // malformed map: stop rather than walk forever
-            if (entry->size < 20) {
-                break;
-            }
             cursor += entry->size + sizeof(entry->size);
         }
     } else if ((info->flags & MULTIBOOT_INFO_MEMORY) != 0) {

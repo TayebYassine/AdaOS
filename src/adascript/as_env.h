@@ -23,6 +23,7 @@ struct as_env {
     int break_flag;
     int continue_flag;
     int loop_depth;
+    int block_depth;  // blocks running right now, to bound the recursion
     int error_line;  // where the error happened
     int error_col;
     char error_text[AS_LINE_MAX];  // and how to explain it

@@ -279,13 +279,24 @@ static int load_entry(const struct diskfs_entry* entry) {
         return fs_write(path, "", 0) != 0;
     }
 
-    sectors = (entry->size + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
-    if (entry->sector < DISKFS_DATA_START ||
-        entry->sector + sectors > ata_sector_count()) {
+    // The table comes off the disk, so its numbers cannot be trusted: a size
+    // that would overflow the sector sum, or a span that does not lie inside
+    // the drive, is refused before anything is allocated.
+    if (entry->size > 0xFFFFFFFFu - (ATA_SECTOR_SIZE - 1)) {
         return 0;
     }
 
-    data = (char*)kmalloc(entry->size + 1);
+    sectors = (entry->size + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
+    if (entry->sector < DISKFS_DATA_START ||
+        entry->sector >= ata_sector_count() ||
+        sectors > ata_sector_count() - entry->sector) {
+        return 0;
+    }
+
+    // ata_read() moves whole sectors, so the buffer must hold the padding at
+    // the end of the last one too; a buffer of entry->size + 1 let that last,
+    // partial sector run into the next heap block.
+    data = (char*)kmalloc((size_t)sectors * ATA_SECTOR_SIZE + 1);
     if (data == 0) {
         return 0;
     }

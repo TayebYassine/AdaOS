@@ -135,6 +135,7 @@ int adascript_run_string(const char* script) {
     env.break_flag = 0;
     env.continue_flag = 0;
     env.loop_depth = 0;
+    env.block_depth = 0;
     env.error_line = 0;
     env.error_col = 0;
     env.error_text[0] = '\0';

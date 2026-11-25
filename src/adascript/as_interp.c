@@ -383,9 +383,15 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
     as_value_free(&val);
 }
 
+// Every level of block nesting costs a whole as_exec_block() frame, and a
+// script may open blocks as deep as it likes. Eight levels leaves room for the
+// statement being run and the expression parser above them inside the task's
+// 16 KiB stack, and stops a bad script with an error instead of a crash.
+#define AS_MAX_BLOCK_DEPTH 8
+
 /* Execute a block of lines between start and end (inclusive). */
-int as_exec_block(struct as_env* env, struct as_line* lines, int start,
-                         int end) {
+static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
+                               int start, int end) {
     int i = start;
     while (i <= end) {
         if (env->error) {
@@ -822,4 +828,22 @@ int as_exec_block(struct as_env* env, struct as_line* lines, int start,
     }
 
     return 0;
+}
+
+/* Run a block, counting the nesting so a script cannot recurse off the stack. */
+int as_exec_block(struct as_env* env, struct as_line* lines, int start,
+                  int end) {
+    int result;
+
+    if (env->block_depth >= AS_MAX_BLOCK_DEPTH) {
+        as_errorf(env, "blocks nest deeper than %d levels.",
+                  AS_MAX_BLOCK_DEPTH);
+        return -1;
+    }
+
+    env->block_depth++;
+    result = as_exec_block_inner(env, lines, start, end);
+    env->block_depth--;
+
+    return result;
 }

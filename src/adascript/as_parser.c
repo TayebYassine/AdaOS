@@ -463,6 +463,15 @@ static struct as_value as_parse_primary(struct as_env* env,
     // Identifier and variable access
     if (lex->cur.kind == TOK_IDENT) {
         char name[AS_NAME_MAX];
+
+        // Cutting a name down here would quietly read a different variable
+        // that happens to share its first characters.
+        if (strlen(lex->cur.text) >= sizeof(name)) {
+            as_errorf(env, "a variable name is longer than %d characters.",
+                      AS_NAME_MAX - 1);
+            return as_error_value();
+        }
+
         strncpy(name, lex->cur.text, sizeof(name) - 1);
         name[sizeof(name) - 1] = '\0';
         as_lexer_next(lex);
