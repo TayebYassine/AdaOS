@@ -205,10 +205,14 @@ int tolower(int c) {
     return c;
 }
 
-/* Read a number from the start of a string, 0 when there is none. */
+/* Read a number from the start of a string, 0 when there is none. A value
+ * outside the int range stops at INT32_MIN or INT32_MAX: building it in signed
+ * arithmetic would overflow, which is undefined behaviour and gave garbage for
+ * long runs of digits. */
 int atoi(const char* s) {
     int sign = 1;
-    int value = 0;
+    uint32_t value = 0;
+    uint32_t limit;
 
     while (*s == ' ' || *s == '\t') {
         s++;
@@ -221,12 +225,25 @@ int atoi(const char* s) {
         s++;
     }
 
+    limit = (sign < 0) ? 2147483648u : 2147483647u;
+
     while (*s >= '0' && *s <= '9') {
-        value = value * 10 + (*s - '0');
+        uint32_t digit = (uint32_t)(*s - '0');
+
+        if (value > (limit - digit) / 10u) {
+            value = limit;
+            break;
+        }
+
+        value = value * 10u + digit;
         s++;
     }
 
-    return value * sign;
+    if (sign < 0) {
+        return value >= 2147483648u ? (-2147483647 - 1) : -(int)value;
+    }
+
+    return (int)value;
 }
 
 /* Write value as decimal text into buf, which needs 12 bytes. Returns buf. */

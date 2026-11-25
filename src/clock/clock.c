@@ -394,37 +394,48 @@ static int write_number(char* out, int at, int value, int width) {
 
 /* The date and time as text, the way the screen shows them. */
 void clock_stamp(char* out, int ampm) {
+    struct clock_time stamp_now;
+    interrupt_flags flags;
     int at = 0;
-    int hour = now.hour;
+    int hour;
+
+    // One snapshot of the fields: a tick landing between them would otherwise
+    // put two different times into the same stamp (19:00:00 right after
+    // 20:00:00, to name one).
+    flags = interrupt_save();
+    stamp_now = now;
+    interrupt_restore(flags);
+
+    hour = stamp_now.hour;
 
     if (ampm) {
-        hour = now.hour % 12;
+        hour = stamp_now.hour % 12;
         if (hour == 0) {
             hour = 12;
         }
     }
 
-    at = write_number(out, at, now.month, 2);
+    at = write_number(out, at, stamp_now.month, 2);
     out[at] = '-';
     at++;
-    at = write_number(out, at, now.day, 2);
+    at = write_number(out, at, stamp_now.day, 2);
     out[at] = '-';
     at++;
-    at = write_number(out, at, now.year, 4);
+    at = write_number(out, at, stamp_now.year, 4);
     out[at] = ' ';
     at++;
     at = write_number(out, at, hour, 2);
     out[at] = ':';
     at++;
-    at = write_number(out, at, now.minute, 2);
+    at = write_number(out, at, stamp_now.minute, 2);
     out[at] = ':';
     at++;
-    at = write_number(out, at, now.second, 2);
+    at = write_number(out, at, stamp_now.second, 2);
 
     if (ampm) {
         out[at] = ' ';
         at++;
-        out[at] = (now.hour < 12) ? 'A' : 'P';
+        out[at] = (stamp_now.hour < 12) ? 'A' : 'P';
         at++;
         out[at] = 'M';
         at++;

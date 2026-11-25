@@ -5,7 +5,7 @@
 #include "kmalloc.h"
 #include "libc.h"
 
-#define AS_ARRAY_MAX 256
+// AS_ARRAY_MAX, the array limit, lives in as_common.h with the other limits.
 
 char* as_strdup(const char* s) {
     if (s == 0) {

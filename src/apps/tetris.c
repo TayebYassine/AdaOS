@@ -255,10 +255,12 @@ static void update_side_panel(void) {
     screen_puts_at(20, 46, " Up Rot   ", COLOR_EMPTY);
     screen_puts_at(21, 46, " Dn Drop  ", COLOR_EMPTY);
 
+    // Row 16, not 15: rows 12-15 are the NEXT preview, and writing the
+    // message there left half of the preview's last row on screen.
     if (game_over) {
-        screen_puts_at(15, 47, "GAME  OVER", COLOR_GAMEOVER);
+        screen_puts_at(16, 47, "GAME  OVER", COLOR_GAMEOVER);
     } else {
-        screen_puts_at(15, 47, "          ", COLOR_EMPTY);
+        screen_puts_at(16, 47, "          ", COLOR_EMPTY);
     }
 }
 

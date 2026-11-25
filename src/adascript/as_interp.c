@@ -185,6 +185,19 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
                 body[body_len - 1] == ',')) {
             body[--body_len] = '\0';
         }
+
+        // "text + endl" means the same as "text endl": the '+' was joining
+        // the newline word, which is no value. Left in place it would join the
+        // missing right operand, which reads as 0, so every such line ended
+        // with a stray 0.
+        if (body_len > 0 && body[body_len - 1] == '+') {
+            body[--body_len] = '\0';
+            while (body_len > 0 &&
+                   (body[body_len - 1] == ' ' ||
+                    body[body_len - 1] == '\t')) {
+                body[--body_len] = '\0';
+            }
+        }
     }
 
     p = body;

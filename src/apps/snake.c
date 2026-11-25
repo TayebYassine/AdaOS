@@ -240,8 +240,11 @@ static void step_snake(void) {
     int check_limit = eating ? snake_len : (snake_len - 1);
     for (int i = 1; i < check_limit; i++) {
         if (snake[i].row == next_r && snake[i].col == next_c) {
-            game_state = 1;
+            // Read the elapsed time first: once game_state is no longer 0,
+            // get_elapsed_seconds() reports final_elapsed instead, which is
+            // still 0 here and would show 00:00 for every finished game.
             final_elapsed = get_elapsed_seconds();
+            game_state = 1;
             draw_dialog("You Lost!");
             return;
         }
@@ -268,8 +271,9 @@ static void step_snake(void) {
         draw_top_bar();
 
         if (score >= 100) {
-            game_state = 2;
+            // As above: take the time before the state stops the clock.
             final_elapsed = get_elapsed_seconds();
+            game_state = 2;
             draw_dialog("You Win!");
             return;
         }

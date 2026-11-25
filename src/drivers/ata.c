@@ -217,7 +217,9 @@ const char* ata_model(void) { return model; }
 int ata_read(uint32_t lba, void* buffer, uint32_t count) {
     uint8_t* out = (uint8_t*)buffer;
 
-    if (!present) {
+    // The command would run off the end of the drive, where the result is
+    // undefined; refuse it instead of letting the transfer wrap.
+    if (!present || count == 0 || lba >= sectors || count > sectors - lba) {
         return 0;
     }
 
@@ -249,7 +251,9 @@ int ata_read(uint32_t lba, void* buffer, uint32_t count) {
 int ata_write(uint32_t lba, const void* buffer, uint32_t count) {
     const uint8_t* in = (const uint8_t*)buffer;
 
-    if (!present) {
+    // Never write past the end of the drive: the range check is what keeps a
+    // bad LBA on a damaged table from scribbling over whatever lies beyond.
+    if (!present || count == 0 || lba >= sectors || count > sectors - lba) {
         return 0;
     }
 

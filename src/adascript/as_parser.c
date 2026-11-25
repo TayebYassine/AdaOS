@@ -435,7 +435,18 @@ static struct as_value as_parse_primary(struct as_env* env,
             if (val.u.arr.count == 0) {
                 val.elem_type = item.type;
             }
-            as_array_append(&val, &item);
+
+            // A full array must not swallow the rest of the literal without a
+            // word: the script would go on with items missing.
+            if (!as_array_append(&val, &item)) {
+                as_value_free(&item);
+                as_value_free(&val);
+                as_errorf(env,
+                          "an item could not be added to the array (limit "
+                          "%d, or out of memory).",
+                          AS_ARRAY_MAX);
+                return as_error_value();
+            }
             as_value_free(&item);
             if (lex->cur.kind == TOK_COMMA) {
                 as_lexer_next(lex);

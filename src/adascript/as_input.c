@@ -142,9 +142,12 @@ void as_exec_input(struct as_env* env, const char* stmt) {
 
     char var_name[AS_NAME_MAX];
     int v_len = 0;
+    int name_too_long = 0;
     while (*p != '\0' && *p != ' ' && *p != '\t') {
         if (v_len < (int)sizeof(var_name) - 1) {
             var_name[v_len++] = *p;
+        } else {
+            name_too_long = 1;
         }
         p++;
     }
@@ -152,6 +155,13 @@ void as_exec_input(struct as_env* env, const char* stmt) {
 
     if (var_name[0] == '\0') {
         as_errorf(env, "input needs a variable name.");
+        return;
+    }
+    // A name cut short here would define a different variable than the one
+    // the script wrote, so refuse it the way "define" does.
+    if (name_too_long) {
+        as_errorf(env, "a variable name is longer than %d characters.",
+                  AS_NAME_MAX - 1);
         return;
     }
 

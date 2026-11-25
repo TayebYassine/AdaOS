@@ -349,6 +349,11 @@ void screen_fill_row(int row, char c, uint8_t attribute) {
 
 /* Draw a string on one row, clipped at the right edge. */
 void screen_puts_at(int row, int col, const char* text, uint8_t attribute) {
+    // A row outside the screen would address memory past the text buffer.
+    if (row < 0 || row >= SCREEN_ROWS) {
+        return;
+    }
+
     for (int i = 0; text[i] != '\0'; i++) {
         if (col + i >= SCREEN_COLS) {
             break;

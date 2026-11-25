@@ -7,4 +7,7 @@
 #define AS_NAME_MAX 32
 #define AS_LINE_MAX 256
 
+// Most items one array value can hold; as_array_append() refuses past this.
+#define AS_ARRAY_MAX 256
+
 #endif /* ADAOS_ADASCRIPT_COMMON_H */
