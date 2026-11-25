@@ -35,6 +35,12 @@ static struct clock_time now;
 /* Set while the editor is on screen: its title bar owns the top row. */
 static int draw_paused = 0;
 
+/* Set when the last read showed a century register the RTC really keeps.
+ * Register 0x32 does not exist on every machine, and writing a century into
+ * whatever else lives there would corrupt an unrelated CMOS byte, so the date
+ * is only written back when the read proved the register is there. */
+static int century_present = 0;
+
 /* Read one byte from the given CMOS register. */
 static uint8_t cmos_read(uint8_t reg) {
     outb(CMOS_ADDRESS, reg);
@@ -176,15 +182,20 @@ static int rtc_read(struct clock_time* out) {
     }
 
     // Without a century register, a two-digit year is split at 80.
-    if (cen >= 19 && cen <= 99) {
+    int has_century = (cen >= 19 && cen <= 99);
+
+    if (has_century) {
         full_year = cen * 100 + yr;
     } else {
         full_year = (yr >= 80 ? 1900 : 2000) + yr;
     }
 
     if (!is_valid_time(hr, min, sec) || !is_valid_date(full_year, month, day)) {
+        century_present = 0;
         return 0;
     }
+
+    century_present = has_century;
 
     out->year = full_year;
     out->month = month;
@@ -272,7 +283,12 @@ static void rtc_write_date(int year, int month, int day) {
     cmos_write(RTC_DAY, rtc_day);
     cmos_write(RTC_MONTH, rtc_month);
     cmos_write(RTC_YEAR, rtc_year);
-    cmos_write(RTC_CENTURY, rtc_century);
+
+    // Only touch the century byte when this RTC was seen to have one.
+    if (century_present) {
+        cmos_write(RTC_CENTURY, rtc_century);
+    }
+
     cmos_write(RTC_DAY_OF_WEEK, rtc_dow);
 
     cmos_write(RTC_STATUS_B, status_b & 0x7F);

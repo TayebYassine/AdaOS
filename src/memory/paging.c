@@ -132,6 +132,13 @@ void paging_init(void) {
         }
     }
 
+    // Nothing above the map will be reachable, so the page allocator must not
+    // hand out frames from up there - and that includes the frames this loop
+    // itself takes for page tables, because they are written through as soon
+    // as they are claimed. Setting the ceiling first keeps every one of them
+    // inside the region the map is about to cover.
+    pmm_set_alloc_ceiling(limit);
+
     for (uint32_t addr = 0; addr < limit; addr += PMM_PAGE_SIZE) {
         if (paging_map_page(addr, addr, PAGE_WRITABLE) != 0) {
             // Out of page tables: keep what we managed to map.
@@ -142,10 +149,6 @@ void paging_init(void) {
 
     identity_bytes = limit;
     stats.identity_bytes = limit;
-
-    // Nothing above the map is reachable, so the page allocator must not
-    // hand out frames from up there either.
-    pmm_set_alloc_ceiling(limit);
 
     __asm__ volatile("mov %0, %%cr3"
                      :

@@ -21,11 +21,20 @@ void power_shutdown(void) {
     }
 }
 
+/* Port reads to wait for the keyboard controller, a few milliseconds at worst. */
+#define KBC_TIMEOUT 100000
+
 /* Restart the machine. */
 void power_reboot(void) {
     // Wait for the keyboard controller's input buffer to empty before the
-    // reset command, or the chip may ignore it.
-    while ((inb(0x64) & 0x02) != 0) {
+    // reset command, or the chip may ignore it. The wait is bounded: a
+    // controller that never clears its buffer would otherwise hang the
+    // machine here, with the reset below and the triple fault after it both
+    // unreachable.
+    for (uint32_t i = 0; i < KBC_TIMEOUT; i++) {
+        if ((inb(0x64) & 0x02) == 0) {
+            break;
+        }
     }
 
     outb(0x64, 0xFE);  // pulse the controller's reset line

@@ -21,9 +21,13 @@ section .text
 global _start
 extern kernel_main
 _start:
+    cld                     ; C code assumes string moves count upwards
     mov esp, stack_top
-    push ebx
-    push eax
+    and esp, 0xFFFFFFF0     ; the i386 C ABI wants a 16-byte aligned stack
+    sub esp, 8              ; padding, so esp stays aligned once the two
+                            ; arguments are pushed below
+    push ebx                ; second argument: multiboot info pointer
+    push eax                ; first argument: multiboot magic
     call kernel_main
 .hang:
     cli
