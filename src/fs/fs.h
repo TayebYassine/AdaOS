@@ -70,6 +70,12 @@ struct fs_node* fs_mkdir(const char* path);
 /* Create a file, or replace the contents of an existing one. */
 struct fs_node* fs_write(const char* path, const char* data, uint32_t len);
 
+/* The same, but takes over a heap buffer of at least len + 1 bytes instead of
+ * copying it, so reading a file back from the disk needs one buffer, not two.
+ * The buffer belongs to the tree afterwards and must not be freed by the
+ * caller; on failure it stays the caller's. */
+struct fs_node* fs_write_owned(const char* path, char* data, uint32_t len);
+
 /* Remove a file, or a directory and everything under it. */
 int fs_remove(const char* path);
 

@@ -36,10 +36,18 @@ while IFS= read -r src; do
     rel="${src#"$SRC"/}"
     obj="$BUILD/${rel%.c}.o"
     mkdir -p "$(dirname "$obj")"
-    # -fno-builtin: we define strlen/memcpy/... ourselves in libc.c
+    # -O2: without it every file was built at -O0, the single biggest cost in
+    #       the whole system, from the scheduler to the disk writes.
+    # -mno-sse -mno-mmx: an interrupt handler must not use the FPU or MMX
+    #       state it never saves; x86-64 would otherwise vectorize freely.
+    # -Wall -Wextra: the kernel is freestanding, so the compiler is the only
+    #       reviewer looking for suspicious conversions and unused results.
+    # -fno-builtin: we define strlen/memcpy/... ourselves in libc.c, and this
+    #       also stops GCC from turning a loop into a call to one of them
     # -fno-asynchronous-unwind-tables: no .eh_frame, nothing unwinds in a kernel
-    gcc -m32 -ffreestanding -fno-builtin -fno-pie -fno-stack-protector \
-        -fno-asynchronous-unwind-tables -DADAOS_VERSION="\"$VERSION\"" \
+    gcc -m32 -O2 -ffreestanding -fno-builtin -fno-pie -fno-stack-protector \
+        -fno-asynchronous-unwind-tables -mno-sse -mno-mmx -Wall -Wextra \
+        -DADAOS_VERSION="\"$VERSION\"" \
         "${INCLUDES[@]}" -c "$src" -o "$obj"
     OBJECTS+=("$obj")
 done < <(find "$SRC" -type f -name '*.c' | sort)

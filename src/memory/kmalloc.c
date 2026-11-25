@@ -26,7 +26,7 @@ struct heap_block {
     uint32_t size;            // bytes of payload, not counting this header
     uint32_t free;            // 1 while the block is available
     struct heap_block* next;  // next block in address order
-    uint32_t padding;         // keeps the header 16 bytes
+    struct heap_block* prev;  // previous block, so kfree() need not search
 };
 
 /* Guards every field below, the block list above all. */
@@ -100,7 +100,7 @@ static int heap_grow(uint32_t bytes) {
     block->size = want - sizeof(struct heap_block);
     block->free = 1;
     block->next = 0;
-    block->padding = 0;
+    block->prev = 0;
 
     heap_mapped += want;
 
@@ -119,6 +119,7 @@ static int heap_grow(uint32_t bytes) {
     if (tail->free) {
         tail->size += sizeof(struct heap_block) + block->size;
     } else {
+        block->prev = tail;
         tail->next = block;
     }
 
@@ -140,7 +141,11 @@ static void* take_block(uint32_t need) {
             rest->size = block->size - need - sizeof(struct heap_block);
             rest->free = 1;
             rest->next = block->next;
-            rest->padding = 0;
+            rest->prev = block;
+
+            if (rest->next != 0) {
+                rest->next->prev = rest;
+            }
 
             block->next = rest;
             block->size = need;
@@ -185,21 +190,32 @@ void* kmalloc(size_t size) {
     return result;
 }
 
-/* Is "block" one of the headers in this heap's list? */
-static struct heap_block* known_block(struct heap_block* block) {
-    for (struct heap_block* cur = first_block; cur != 0; cur = cur->next) {
-        if (cur == block) {
-            return cur;
-        }
+/* Is "block" really one of this heap's headers? The backward link answers
+ * that without walking the list, which is what kept kfree() quadratic while a
+ * tree, an environment or the whole file system was being torn down. Both
+ * links are range-checked first, so a stray pointer cannot make this read
+ * outside the mapped heap. */
+static int block_linked(struct heap_block* block) {
+    struct heap_block* previous = block->prev;
+    struct heap_block* next = block->next;
 
-        // A damaged list would walk for ever; stop as soon as a link does
-        // not move forward.
-        if (cur->next != 0 && cur->next <= cur) {
-            return 0;
-        }
+    if (next != 0 &&
+        ((uint32_t)next < HEAP_BASE || (uint32_t)next >= HEAP_BASE + heap_mapped ||
+         ((uint32_t)next & (HEAP_ALIGNMENT - 1)) != 0)) {
+        return 0;
     }
 
-    return 0;
+    if (previous == 0) {
+        return block == first_block;
+    }
+
+    if ((uint32_t)previous < HEAP_BASE ||
+        (uint32_t)previous >= HEAP_BASE + heap_mapped ||
+        ((uint32_t)previous & (HEAP_ALIGNMENT - 1)) != 0) {
+        return 0;
+    }
+
+    return previous->next == block;
 }
 
 /* Give an allocation back and merge it with free neighbours. */
@@ -218,7 +234,7 @@ void kfree(void* ptr) {
     // already-freed one would otherwise write its flag into whatever memory
     // it happens to point at, and corrupt the block list on the way out.
     if (address < HEAP_BASE || address >= HEAP_BASE + heap_mapped ||
-        (address & (HEAP_ALIGNMENT - 1)) != 0 || known_block(block) == 0 ||
+        (address & (HEAP_ALIGNMENT - 1)) != 0 || !block_linked(block) ||
         block->free) {
         spinlock_release(&heap_lock);
         return;
@@ -230,17 +246,22 @@ void kfree(void* ptr) {
     while (block->next != 0 && block->next->free) {
         block->size += sizeof(struct heap_block) + block->next->size;
         block->next = block->next->next;
+
+        if (block->next != 0) {
+            block->next->prev = block;
+        }
     }
 
     // Then merge the block into a free predecessor, if there is one.
-    struct heap_block* previous = first_block;
-    while (previous != 0 && previous->next != block) {
-        previous = previous->next;
-    }
+    struct heap_block* previous = block->prev;
 
     if (previous != 0 && previous->free) {
         previous->size += sizeof(struct heap_block) + block->size;
         previous->next = block->next;
+
+        if (block->next != 0) {
+            block->next->prev = previous;
+        }
     }
 
     spinlock_release(&heap_lock);

@@ -328,6 +328,17 @@ void cursor_right(void) {
     update_cursor();
 }
 
+/* Read one cell back, so a caller can skip rewriting what is already there. */
+uint16_t screen_cell(int row, int col) {
+    volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;
+
+    if (row < 0 || row >= SCREEN_ROWS || col < 0 || col >= SCREEN_COLS) {
+        return 0;
+    }
+
+    return vga[cell_index(row, col)];
+}
+
 /* Draw one character into one cell, leaving the cursor alone. */
 void screen_put_at(int row, int col, char c, uint8_t attribute) {
     if (row < 0 || row >= SCREEN_ROWS || col < 0 || col >= SCREEN_COLS) {

@@ -68,6 +68,16 @@ static uint32_t cursor_col = 0;
 static uint32_t first_line = 0;  // top line of the view
 static uint32_t first_col = 0;   // leftmost column of the view
 
+// Lines changed since the last repaint, and the view those changes were drawn
+// at. Repainting the whole page on every keystroke was the editor's visible
+// sluggishness; only the lines an edit touched need to go back up.
+static uint32_t dirty_first = 0;
+static uint32_t dirty_last = 0;
+static int dirty_none = 1;
+static uint32_t drawn_first_line = 0;
+static uint32_t drawn_first_col = 0;
+static int full_redraw = 1;
+
 static char note[24] = "";  // short message for the status bar
 
 static uint16_t saved_cells[SCREEN_CELLS];
@@ -327,32 +337,51 @@ static int is_adascript(const char* file) {
            file[length - 1] == 's';
 }
 
-/* Draw the visible lines from first_col on, blank where the file ends. Only an
- * .as file is coloured; any other file stays white. */
+/* Note that the lines from "from" to "to" need drawing again. */
+static void mark_dirty(uint32_t from, uint32_t to) {
+    if (dirty_none) {
+        dirty_first = from;
+        dirty_last = to;
+        dirty_none = 0;
+        return;
+    }
+
+    if (from < dirty_first) {
+        dirty_first = from;
+    }
+    if (to > dirty_last) {
+        dirty_last = to;
+    }
+}
+
+/* Draw one line of the file on one screen row, from first_col on. */
+static void draw_line(int screen_row, uint32_t index) {
+    screen_fill_row(screen_row, ' ', COLOR_TEXT);
+
+    if (index < line_count) {
+        const char* line = line_at(index);
+        uint32_t length = line_length(index);
+
+        classify_line(line);
+
+        for (int col = 0; col < TEXT_COLS; col++) {
+            uint32_t source = first_col + (uint32_t)col;
+
+            if (source >= length) {
+                break;
+            }
+
+            screen_put_at(screen_row, col, line[source],
+                          highlighting ? colors[source] : COLOR_TEXT);
+        }
+    }
+}
+
+/* Draw the visible lines, blanking where the file ends. Only an .as file is
+ * coloured; any other file stays white. */
 static void draw_text(void) {
     for (int row = 0; row < TEXT_ROWS; row++) {
-        uint32_t index = first_line + (uint32_t)row;
-        int screen_row = TEXT_TOP + row;
-
-        screen_fill_row(screen_row, ' ', COLOR_TEXT);
-
-        if (index < line_count) {
-            const char* line = line_at(index);
-            uint32_t length = line_length(index);
-
-            classify_line(line);
-
-            for (int col = 0; col < TEXT_COLS; col++) {
-                uint32_t source = first_col + (uint32_t)col;
-
-                if (source >= length) {
-                    break;
-                }
-
-                screen_put_at(screen_row, col, line[source],
-                              highlighting ? colors[source] : COLOR_TEXT);
-            }
-        }
+        draw_line(TEXT_TOP + row, first_line + (uint32_t)row);
     }
 }
 
@@ -403,16 +432,37 @@ static void keep_cursor_visible(void) {
     }
 }
 
-/* Repaint everything and park the hardware cursor at the insertion point. */
+/* Repaint what changed and park the hardware cursor at the insertion point.
+ * A scrolled or freshly opened view is drawn whole; otherwise only the lines
+ * an edit marked. The title carries the byte count and the status bar carries
+ * the note, so both are cheap single rows and always redrawn. */
 static void render(void) {
     keep_cursor_visible();
 
     draw_title();
-    draw_text();
+
+    if (full_redraw || first_line != drawn_first_line ||
+        first_col != drawn_first_col) {
+        draw_text();
+        full_redraw = 0;
+    } else if (!dirty_none) {
+        for (int row = 0; row < TEXT_ROWS; row++) {
+            uint32_t index = first_line + (uint32_t)row;
+
+            if (index >= dirty_first && index <= dirty_last) {
+                draw_line(TEXT_TOP + row, index);
+            }
+        }
+    }
+
     draw_status();
 
     screen_move_to(TEXT_TOP + (int)(cursor_line - first_line),
                    (int)(cursor_col - first_col));
+
+    drawn_first_line = first_line;
+    drawn_first_col = first_col;
+    dirty_none = 1;
 }
 
 /* Split the file into lines; a final newline starts an empty last line. */
@@ -675,6 +725,10 @@ void editor_open(const char* file) {
     cursor_col = 0;
     first_line = 0;
     first_col = 0;
+    dirty_none = 1;
+    full_redraw = 1;
+    drawn_first_line = 0;
+    drawn_first_col = 0;
     load_file(node);
 
     screen_save(saved_cells, &saved_row, &saved_col);
@@ -694,9 +748,26 @@ void editor_open(const char* file) {
         if (key == KEY_CTRL_S) {
             save_file();
         } else if (key == '\n') {
+            uint32_t at = cursor_line;
+
             split_line();
+
+            // Everything below the break moved down one row.
+            if (cursor_line != at) {
+                mark_dirty(at, MAX_LINES);
+            }
         } else if (key == '\b') {
+            uint32_t at = cursor_line;
+            uint32_t lines_before = line_count;
+
             delete_char();
+
+            if (line_count != lines_before) {
+                // Two lines became one: the rest shifted up a row.
+                mark_dirty(at > 0 ? at - 1 : 0, MAX_LINES);
+            } else {
+                mark_dirty(cursor_line, cursor_line);
+            }
         } else if (key == KEY_UP) {
             move_up();
         } else if (key == KEY_DOWN) {
@@ -707,6 +778,7 @@ void editor_open(const char* file) {
             move_right();
         } else if (key >= ' ' && key < 128) {
             insert_char((char)key);
+            mark_dirty(cursor_line, cursor_line);
         }
     }
 

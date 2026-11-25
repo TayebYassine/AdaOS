@@ -131,7 +131,7 @@ static int ata_start(uint32_t lba, uint32_t chunk, uint8_t command) {
 }
 
 /* Make the drive write its own cache out to the disk. */
-static int ata_flush(void) {
+static int ata_flush_drive(void) {
     if (!ata_select(0)) {
         return 0;
     }
@@ -281,5 +281,11 @@ int ata_write(uint32_t lba, const void* buffer, uint32_t count) {
         count -= chunk;
     }
 
-    return ata_flush();
+    // No flush here: the caller writes many sectors in a row and flushes once
+    // through ata_flush_cache(). A FLUSH after every write costs more than the
+    // transfer it follows.
+    return 1;
 }
+
+/* Push the drive's write cache out to the platters. */
+int ata_flush_cache(void) { return ata_flush_drive(); }

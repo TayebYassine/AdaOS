@@ -115,12 +115,30 @@ static void reserve_region(uint32_t base, uint32_t length) {
     }
 }
 
-/* Find a free page in [from, to); 0 if there is none. */
+/* Find a free page in [from, to); 0 if there is none. A whole word of taken
+ * pages is skipped at once, which is what a nearly full or fragmented memory
+ * turns into: one bitmap read per 32 pages instead of one per page. */
 static uint32_t scan_free_page(uint32_t from, uint32_t to) {
-    for (uint32_t page = from; page < to && page < PMM_MAX_PAGES; page++) {
-        if (!page_used(page)) {
-            return page;
+    uint32_t page = from;
+
+    while (page < to && page < PMM_MAX_PAGES) {
+        uint32_t word = page / PMM_BITS_PER_WORD;
+        uint32_t bits = bitmap[word];
+
+        if (bits != 0xFFFFFFFFu) {
+            // Ignore the bits before "page" in this word, then take the
+            // lowest free one left (__builtin_ctz finds it in one step).
+            bits |= (1u << (page % PMM_BITS_PER_WORD)) - 1u;
+
+            if (bits != 0xFFFFFFFFu) {
+                uint32_t found = word * PMM_BITS_PER_WORD +
+                                 (uint32_t)__builtin_ctz(~bits);
+
+                return found < to ? found : 0;
+            }
         }
+
+        page = (word + 1) * PMM_BITS_PER_WORD;
     }
 
     return 0;

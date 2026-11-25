@@ -300,6 +300,10 @@ static void tree_walk(struct fs_node* dir, char* prefix, int len) {
     }
 }
 
+/* How many captures are running. While one is, a command's own sync waits for
+ * the whole script to finish, so a loop of commands rewrites the disk once. */
+static int sync_hold = 0;
+
 /* Split the line into words and run the command the first one names. */
 void command_execute(char* line) {
     char* words[MAX_WORDS];
@@ -758,7 +762,9 @@ void command_execute(char* line) {
         }
     }
 
-    diskfs_sync();
+    if (sync_hold == 0) {
+        diskfs_sync();
+    }
 }
 
 /* Did a command collect an error instead of normal output? */
@@ -791,9 +797,15 @@ int command_run_capture(const char* line, char** output) {
     }
     memcpy(copy, line, len + 1);
 
+    // Each command inside a script would otherwise rewrite the whole disk on
+    // its way out; the script's own caller syncs once when it is done.
+    sync_hold++;
+
     screen_capture_begin();
     command_execute(copy);
     text = screen_capture_end();
+
+    sync_hold--;
     kfree(copy);
 
     if (text == 0) {

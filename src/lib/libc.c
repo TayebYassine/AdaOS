@@ -1,14 +1,41 @@
 #include "libc.h"
 
-/* Length of a string, not counting the ending '\0'. */
-size_t strlen(const char* s) {
-    size_t length = 0;
+#include <stdint.h>
 
-    while (s[length] != '\0') {
-        length++;
+/* Every fourth byte of a word, and the high bit of each of those bytes. */
+#define WORD_ONES 0x01010101u
+#define WORD_HIGHS 0x80808080u
+
+/* Length of a string, not counting the ending '\0'. Reads a word at a time:
+ * the byte loops these replace are the kernel's hottest code (ATA buffers,
+ * screen scrolls, every path lookup). */
+size_t strlen(const char* s) {
+    const char* p = s;
+
+    // Walk up to a word boundary first, so the wide reads are aligned.
+    while (((uint32_t)p & 3u) != 0) {
+        if (*p == '\0') {
+            return (size_t)(p - s);
+        }
+        p++;
     }
 
-    return length;
+    // A zero byte in a word shows up as a high bit in (~word & (word-1)).
+    for (;;) {
+        uint32_t word = *(const uint32_t*)p;
+
+        if (((word - WORD_ONES) & ~word & WORD_HIGHS) != 0) {
+            break;
+        }
+
+        p += 4;
+    }
+
+    while (*p != '\0') {
+        p++;
+    }
+
+    return (size_t)(p - s);
 }
 
 /* Compare two strings: < 0, 0 or > 0. */
@@ -133,13 +160,21 @@ char* strstr(const char* haystack, const char* needle) {
     return 0;
 }
 
-/* Copy n bytes from src to dst. Returns dst. */
+/* Copy n bytes from src to dst, a word at a time. Returns dst. */
 void* memcpy(void* dst, const void* src, size_t n) {
     unsigned char* d = (unsigned char*)dst;
     const unsigned char* s = (const unsigned char*)src;
+    size_t words = n / 4;
 
-    for (size_t i = 0; i < n; i++) {
-        d[i] = s[i];
+    if (words != 0) {
+        __asm__ volatile("rep movsl"
+                         : "+D"(d), "+S"(s), "+c"(words)
+                         :
+                         : "memory");
+    }
+
+    for (size_t tail = n % 4; tail > 0; tail--) {
+        *d++ = *s++;
     }
 
     return dst;
@@ -151,10 +186,11 @@ void* memmove(void* dst, const void* src, size_t n) {
     const unsigned char* s = (const unsigned char*)src;
 
     if (d < s) {
-        for (size_t i = 0; i < n; i++) {
-            d[i] = s[i];
-        }
-    } else if (d > s) {
+        return memcpy(dst, src, n);
+    }
+
+    if (d > s) {
+        // Backwards, so a byte is read before it is overwritten.
         for (size_t i = n; i > 0; i--) {
             d[i - 1] = s[i - 1];
         }
@@ -163,26 +199,53 @@ void* memmove(void* dst, const void* src, size_t n) {
     return dst;
 }
 
-/* Compare n bytes: < 0, 0 or > 0. */
+/* Compare n bytes: < 0, 0 or > 0. Whole words are compared at once until an
+ * answer can only come from inside one of them. */
 int memcmp(const void* a, const void* b, size_t n) {
     const unsigned char* pa = (const unsigned char*)a;
     const unsigned char* pb = (const unsigned char*)b;
+    size_t at = 0;
 
-    for (size_t i = 0; i < n; i++) {
-        if (pa[i] != pb[i]) {
-            return pa[i] - pb[i];
+    while (at + 4 <= n) {
+        uint32_t wa;
+        uint32_t wb;
+
+        memcpy(&wa, pa + at, 4);
+        memcpy(&wb, pb + at, 4);
+
+        if (wa != wb) {
+            break;
+        }
+
+        at += 4;
+    }
+
+    // Byte by byte from the first word that differed, or from the tail.
+    for (; at < n; at++) {
+        if (pa[at] != pb[at]) {
+            return pa[at] - pb[at];
         }
     }
 
     return 0;
 }
 
-/* Fill n bytes of dst with the byte value. Returns dst. */
+/* Fill n bytes of dst with the byte value, a word at a time. Returns dst. */
 void* memset(void* dst, int value, size_t n) {
     unsigned char* d = (unsigned char*)dst;
+    size_t words = n / 4;
 
-    for (size_t i = 0; i < n; i++) {
-        d[i] = (unsigned char)value;
+    if (words != 0) {
+        uint32_t pattern = (uint32_t)(unsigned char)value * WORD_ONES;
+
+        __asm__ volatile("rep stosl"
+                         : "+D"(d), "+c"(words)
+                         : "a"(pattern)
+                         : "memory");
+    }
+
+    for (size_t tail = n % 4; tail > 0; tail--) {
+        *d++ = (unsigned char)value;
     }
 
     return dst;

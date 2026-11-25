@@ -470,16 +470,26 @@ struct fs_node* fs_mkdir(const char* path) {
     return node;
 }
 
-/* Point a file node at new content, replacing whatever was there. */
-static int fill_file(struct fs_node* node, const char* data, uint32_t len) {
-    char* buf = (char*)kmalloc(len + 1);
+/* Point a file node at new content, replacing whatever was there. With
+ * "take" set the new content is an existing heap buffer of at least len + 1
+ * bytes and becomes the node's; otherwise it is copied. */
+static int fill_file(struct fs_node* node, const char* data, uint32_t len,
+                     int take) {
+    char* buf;
 
-    if (buf == 0) {
-        print("Error: out of memory.\n");
-        return 0;
+    if (take) {
+        buf = (char*)data;
+    } else {
+        buf = (char*)kmalloc(len + 1);
+
+        if (buf == 0) {
+            print("Error: out of memory.\n");
+            return 0;
+        }
+
+        memcpy(buf, data, len);
     }
 
-    memcpy(buf, data, len);
     buf[len] = '\0';
 
     kfree(node->data);
@@ -491,7 +501,7 @@ static int fill_file(struct fs_node* node, const char* data, uint32_t len) {
 
 /* The body of fs_write(), which runs with the tree lock held. */
 static struct fs_node* write_tree(const char* path, const char* data,
-                                  uint32_t len) {
+                                  uint32_t len, int take) {
     char abs[FS_PATH_MAX];
     char name[FS_NAME_MAX];
     struct fs_node* existing;
@@ -510,7 +520,7 @@ static struct fs_node* write_tree(const char* path, const char* data,
             return 0;
         }
 
-        if (!fill_file(existing, data, len)) {
+        if (!fill_file(existing, data, len, take)) {
             return 0;
         }
 
@@ -533,7 +543,7 @@ static struct fs_node* write_tree(const char* path, const char* data,
         return 0;
     }
 
-    if (!fill_file(node, data, len)) {
+    if (!fill_file(node, data, len, take)) {
         kfree(node);
         return 0;
     }
@@ -549,7 +559,22 @@ struct fs_node* fs_write(const char* path, const char* data, uint32_t len) {
     struct fs_node* node;
 
     spinlock_acquire(&tree_lock);
-    node = write_tree(path, data, len);
+    node = write_tree(path, data, len, 0);
+    spinlock_release(&tree_lock);
+
+    return node;
+}
+
+/* Create a file from a buffer the tree then owns, instead of copying it. */
+struct fs_node* fs_write_owned(const char* path, char* data, uint32_t len) {
+    struct fs_node* node;
+
+    if (data == 0) {
+        return 0;
+    }
+
+    spinlock_acquire(&tree_lock);
+    node = write_tree(path, data, len, 1);
     spinlock_release(&tree_lock);
 
     return node;
@@ -719,7 +744,7 @@ static struct fs_node* copy_node(struct fs_node* src, struct fs_node* parent,
     }
 
     if (src->kind == FS_FILE) {
-        if (!fill_file(node, src->data, src->size)) {
+        if (!fill_file(node, src->data, src->size, 0)) {
             kfree(node);
             return 0;
         }
@@ -801,7 +826,7 @@ static int copy_tree(const char* from, const char* to) {
             return 0;
         }
 
-        if (!fill_file(target, src->data, src->size)) {
+        if (!fill_file(target, src->data, src->size, 0)) {
             return 0;
         }
 
@@ -1071,7 +1096,7 @@ static int load_tar(uint32_t start, uint32_t end) {
         } else if (header->typeflag == '5') {
             mkdir_tree(path);
         } else if (header->typeflag == '0' || header->typeflag == '\0') {
-            if (write_tree(path, (const char*)(data + offset), size) != 0) {
+            if (write_tree(path, (const char*)(data + offset), size, 0) != 0) {
                 files++;
             }
         }

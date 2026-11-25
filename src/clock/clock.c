@@ -444,6 +444,27 @@ void clock_stamp(char* out, int ampm) {
     out[at] = '\0';
 }
 
+/* Write "text" at (row, col), but only into the cells that do not already
+ * hold that character and colour. Comparing with the screen rather than with
+ * the last text drawn means a cleared or restored screen still comes out
+ * right, and a tick that changes one digit writes one cell. */
+static void draw_changed(int row, int col, const char* text) {
+    for (int i = 0; text[i] != '\0'; i++) {
+        int at = col + i;
+        uint16_t want;
+
+        if (at < 0 || at >= SCREEN_COLS) {
+            break;
+        }
+
+        want = (uint16_t)(((uint16_t)COLOR_BAR << 8) | (uint8_t)text[i]);
+
+        if (screen_cell(row, at) != want) {
+            screen_put_at(row, at, text[i], COLOR_BAR);
+        }
+    }
+}
+
 /* Paint the top row: the version at the left, the date and time at the right.
  */
 void clock_draw(void) {
@@ -455,9 +476,8 @@ void clock_draw(void) {
 
     clock_stamp(stamp, 0);
 
-    screen_fill_row(0, ' ', COLOR_BAR);
-    screen_puts_at(0, 0, ADAOS_VERSION, COLOR_BAR);
-    screen_puts_at(0, SCREEN_COLS - (int)strlen(stamp), stamp, COLOR_BAR);
+    draw_changed(0, 0, ADAOS_VERSION);
+    draw_changed(0, SCREEN_COLS - (int)strlen(stamp), stamp);
 }
 
 /* IRQ0, once a second: one more second has gone by. */

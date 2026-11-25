@@ -51,6 +51,12 @@ struct diskfs_entry {
 
 static struct diskfs_super super;
 static struct diskfs_entry table[DISKFS_ENTRY_CAPACITY];
+
+// The node each table slot was planned from, in the same order as table[].
+// write_data() would otherwise look every path up again: a string walk and a
+// lock per entry, for a tree the planning pass had already walked.
+static struct fs_node* planned_nodes[DISKFS_ENTRY_CAPACITY];
+
 static uint8_t sector_buffer[ATA_SECTOR_SIZE];
 
 static int present = 0;
@@ -162,7 +168,9 @@ static int plan_tree(struct fs_node* dir, const char* path, uint32_t len,
             return 0;
         }
 
-        entry = &table[planned++];
+        entry = &table[planned];
+        planned_nodes[planned] = child;
+        planned++;
         memset(entry, 0, sizeof(*entry));
         memcpy(entry->path, child_path, child_len + 1);
         entry->flags = DISKFS_USED;
@@ -186,31 +194,38 @@ static int plan_tree(struct fs_node* dir, const char* path, uint32_t len,
     return 1;
 }
 
-/* Write one entry's content, a sector at a time. */
-static int write_data(const struct diskfs_entry* entry) {
-    struct fs_node* node = fs_lookup(entry->path);
-    uint32_t done = 0;
+/* Write one entry's content. A file's sectors were planned back to back, so
+ * the whole run goes out in one command (ata_write splits it into 256-sector
+ * chunks itself); only the partial last sector needs a padded copy. */
+static int write_data(const struct diskfs_entry* entry,
+                      const struct fs_node* node) {
+    uint32_t full = entry->size / ATA_SECTOR_SIZE;
+    uint32_t rest = entry->size % ATA_SECTOR_SIZE;
 
-    if (node == 0 || node->kind != FS_FILE || node->size != entry->size) {
+    if (node == 0 || node->kind != FS_FILE || node->size != entry->size ||
+        node->data == 0) {
         return 0;
     }
 
-    while (done < entry->size) {
-        uint32_t n = entry->size - done;
-
-        if (n > ATA_SECTOR_SIZE) {
-            n = ATA_SECTOR_SIZE;
-        }
-
-        memset(sector_buffer, 0, sizeof(sector_buffer));
-        memcpy(sector_buffer, node->data + done, n);
-
-        if (!ata_write(entry->sector + done / ATA_SECTOR_SIZE, sector_buffer,
-                       1)) {
+    if (full != 0) {
+        if (!ata_write(entry->sector, node->data, full)) {
             return 0;
         }
 
-        done += n;
+        progress_done += full;
+        report_progress(save_percent());
+    }
+
+    if (rest != 0) {
+        // The rest of the sector is padding, and must not be leftover bytes
+        // from whichever file used this buffer last.
+        memset(sector_buffer, 0, sizeof(sector_buffer));
+        memcpy(sector_buffer, node->data + full * ATA_SECTOR_SIZE, rest);
+
+        if (!ata_write(entry->sector + full, sector_buffer, 1)) {
+            return 0;
+        }
+
         progress_done++;
         report_progress(save_percent());
     }
@@ -221,8 +236,10 @@ static int write_data(const struct diskfs_entry* entry) {
 /* Write the whole tree out: data first, then the table, superblock last. */
 static int diskfs_save(void) {
     uint32_t next = DISKFS_DATA_START;
+    uint32_t table_sectors;
 
     memset(table, 0, sizeof(table));
+    memset(planned_nodes, 0, sizeof(planned_nodes));
     planned = 0;
 
     if (!plan_tree(fs_root(), "/", 1, &next)) {
@@ -242,19 +259,38 @@ static int diskfs_save(void) {
         if ((table[i].flags & DISKFS_DIR) != 0 || table[i].size == 0) {
             continue;
         }
-        if (!write_data(&table[i])) {
+        if (!write_data(&table[i], planned_nodes[i])) {
             return 0;
         }
     }
 
-    if (!ata_write(1, table, DISKFS_TABLE_SECTORS)) {
+    // Only the sectors the entries fill need writing. The table reserves room
+    // for 128 entries, so a tree of a few small files was paying for 30
+    // sectors of padding on every single save. The entry count in the
+    // superblock keeps the loader from reading the stale rest.
+    table_sectors = (uint32_t)(((size_t)planned * sizeof(*table) +
+                               ATA_SECTOR_SIZE - 1) /
+                              ATA_SECTOR_SIZE);
+
+    if (table_sectors == 0) {
+        table_sectors = 1;
+    }
+
+    if (!ata_write(1, table, table_sectors)) {
+        return 0;
+    }
+
+    // Everything above is in the drive's cache. Push it out before the
+    // superblock, which is the commit point: once its entry count is on the
+    // platters the file data it names must be there too.
+    if (!ata_flush_cache()) {
         return 0;
     }
 
     saved_entries = planned;
     used_sectors = next - DISKFS_DATA_START;
 
-    return super_save();
+    return super_save() && ata_flush_cache();
 }
 
 /* Put one entry back into the tree. */
@@ -308,12 +344,13 @@ static int load_entry(const struct diskfs_entry* entry) {
 
     data[entry->size] = '\0';
 
-    if (fs_write(path, data, entry->size) == 0) {
+    // The tree takes the buffer over: copying it again would double both the
+    // work and the memory each file needs while it loads.
+    if (fs_write_owned(path, data, entry->size) == 0) {
         kfree(data);
         return 0;
     }
 
-    kfree(data);
     return 1;
 }
 
@@ -354,19 +391,11 @@ static int diskfs_load(void) {
     return 1;
 }
 
-/* Write a table with no entries in it, a sector at a time. */
+/* Write a table with no entries in it. */
 static int write_empty_table(void) {
     memset(table, 0, sizeof(table));
 
-    for (uint32_t i = 0; i < DISKFS_TABLE_SECTORS; i++) {
-        if (!ata_write(1 + i, (const uint8_t*)table + i * ATA_SECTOR_SIZE, 1)) {
-            return 0;
-        }
-
-        report_progress((int)(i + 1) * 9 / (int)DISKFS_TABLE_SECTORS);
-    }
-
-    return 1;
+    return ata_write(1, table, DISKFS_TABLE_SECTORS);
 }
 
 /* Lay down an empty table and superblock. */
@@ -375,7 +404,13 @@ static int diskfs_format(void) {
     used_sectors = 0;
     planned = 0;
 
-    if (!write_empty_table() || !super_save()) {
+    if (!write_empty_table() || !ata_flush_cache()) {
+        return 0;
+    }
+
+    report_progress(9);
+
+    if (!super_save() || !ata_flush_cache()) {
         return 0;
     }
 

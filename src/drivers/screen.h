@@ -44,6 +44,10 @@ void cursor_right(void);
 /* Draw one character into one cell; attribute is a VGA colour byte. */
 void screen_put_at(int row, int col, char c, uint8_t attribute);
 
+/* The cell at (row, col) as the VGA hardware holds it: character in the low
+ * byte, colour in the high one. A cell outside the screen reads as 0. */
+uint16_t screen_cell(int row, int col);
+
 /* Fill a whole row with one character and colour. */
 void screen_fill_row(int row, char c, uint8_t attribute);
 

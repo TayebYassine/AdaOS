@@ -27,7 +27,12 @@ const char* ata_model(void);
 /* Read "count" sectors starting at "lba" into "buffer"; 1 on success. */
 int ata_read(uint32_t lba, void* buffer, uint32_t count);
 
-/* Write "count" sectors from "buffer" starting at "lba"; 1 on success. */
+/* Write "count" sectors from "buffer" starting at "lba"; 1 on success.
+ * The drive's write cache is not flushed: batch writes and call
+ * ata_flush_cache() once when the run is done. */
 int ata_write(uint32_t lba, const void* buffer, uint32_t count);
+
+/* Make the drive write its cache out to the disk; 1 on success. */
+int ata_flush_cache(void);
 
 #endif /* ADAOS_ATA_H */
