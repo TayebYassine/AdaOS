@@ -29,6 +29,13 @@ int diskfs_format_disk(int files, void (*progress)(int percent));
 /* Write the whole tree out, reporting progress; returns 1 on success. */
 int diskfs_write_tree(void (*progress)(int percent));
 
+/* Keep this session in RAM: diskfs_init() mounts nothing and nothing is
+ * written to the disk. Used by setup's "try it out" choice. */
+void diskfs_use_ram(void);
+
+/* Was the disk left alone for a session that only keeps the tree in RAM? */
+int diskfs_ram_only(void);
+
 /* Mount the file system on the first disk; a blank disk is formatted. */
 int diskfs_init(void);
 

@@ -2,7 +2,6 @@
 
 #include <stdint.h>
 
-#include "clock.h"
 #include "diskfs.h"
 #include "keyboard.h"
 #include "libc.h"
@@ -20,6 +19,7 @@
 #define BAR_WIDTH 30                    // characters between the brackets
 
 #define WELCOME_PAUSE_MS 3000
+#define RAM_PAUSE_MS 3000
 #define SHUTDOWN_PAUSE_MS 5000
 #define BAR_PAUSE_MS 150
 
@@ -119,6 +119,26 @@ static int run_operation(const char* title, setup_work work) {
     return ok;
 }
 
+/* Ask whether to install AdaOS or only try it: 1 for install, 2 for RAM. */
+static int ask_mode(void) {
+    print("Do you want to install AdaOS [1] or just try it out [2]? ");
+
+    for (;;) {
+        int key = keyboard_getchar();
+
+        if (key == '1' || key == '2') {
+            print_char((char)key);
+            print_char('\n');
+            return key - '0';
+        }
+
+        if (key == KEY_ESC) {
+            print_char('\n');
+            power_shutdown();
+        }
+    }
+}
+
 /* Ask a yes/no question: 1 for Y, 0 for N, -1 for ESC. */
 static int ask_yes_no(const char* question) {
     print(question);
@@ -151,94 +171,6 @@ static void refuse_required(void) {
 
     timer_sleep(SHUTDOWN_PAUSE_MS);
     power_shutdown();
-}
-
-/* Read one line of text, echoing it as it is typed; 0 when ESC was pressed. */
-static int read_line(char* out, int max) {
-    int length = 0;
-
-    out[0] = '\0';
-
-    for (;;) {
-        int key = keyboard_getchar();
-
-        if (key == '\n') {
-            out[length] = '\0';
-            print_char('\n');
-            return 1;
-        }
-
-        if (key == KEY_ESC) {
-            print_char('\n');
-            return 0;
-        }
-
-        if (key == '\b') {
-            if (length > 0) {
-                length--;
-                print_char('\b');
-            }
-            continue;
-        }
-
-        if (key >= ' ' && key < 127 && length < max - 1) {
-            out[length] = (char)key;
-            length++;
-            print_char((char)key);
-        }
-    }
-}
-
-/* Read "count" digits at the start of "text". */
-static int parse_number(const char* text, int count, int* value) {
-    int result = 0;
-
-    for (int i = 0; i < count; i++) {
-        char c = text[i];
-
-        if (c < '0' || c > '9') {
-            return 0;
-        }
-
-        result = result * 10 + (c - '0');
-    }
-
-    *value = result;
-    return 1;
-}
-
-/* Ask for the date and the time, in the two forms the clock understands. */
-static void ask_date_and_time(void) {
-    char line[16];
-    int year = 0;
-    int month = 0;
-    int day = 0;
-    int hour = 0;
-    int minute = 0;
-    int second = 0;
-
-    print("Enter the date [MM-DD-YYYY]: ");
-
-    if (read_line(line, sizeof(line)) && strlen(line) == 10 && line[2] == '-' &&
-        line[5] == '-' && parse_number(line, 2, &month) &&
-        parse_number(line + 3, 2, &day) && parse_number(line + 6, 4, &year) &&
-        clock_set_date(year, month, day)) {
-        print("Date set.\n");
-    } else {
-        print("Error: Incorrect date format. The date was not changed.\n");
-    }
-
-    print("Enter the time [HH:MM:SS]: ");
-
-    if (read_line(line, sizeof(line)) && strlen(line) == 8 && line[2] == ':' &&
-        line[5] == ':' && parse_number(line, 2, &hour) &&
-        parse_number(line + 3, 2, &minute) &&
-        parse_number(line + 6, 2, &second) &&
-        clock_set_time(hour, minute, second)) {
-        print("Time set.\n\n");
-    } else {
-        print("Error: Incorrect time format. The time was not changed.\n");
-    }
 }
 
 /* Lay an empty, freshly formatted file system on the disk. */
@@ -286,6 +218,20 @@ void setup_run_if_needed(void) {
     screen_clear();
     print("Welcome to AdaOS Setup!\n\n");
 
+    if (ask_mode() == 2) {
+        // Try it out: the tree loaded at boot stays in RAM and the disk is not
+        // touched, so nothing survives the reboot.
+        print("\nOkay, AdaOS's file manager will live in RAM for only this "
+              "session.\n");
+
+        diskfs_use_ram();
+        timer_sleep(RAM_PAUSE_MS);
+        screen_clear();
+        return;
+    }
+
+    print("\n");
+
     accept = ask_yes_no("Would you like to format this disk [Y/N]? ");
     if (accept != 1) {
         refuse_required();
@@ -307,14 +253,7 @@ void setup_run_if_needed(void) {
         print("Okay, sample files will not be installed.\n\n");
     }
 
-    accept = ask_yes_no("Would you like to set the date and time [Y/N]? ");
-    if (accept == 1) {
-        ask_date_and_time();
-    } else {
-        print("Okay, the date and time will not be updated.\n");
-    }
-
-    print("\nCongratulations! We're all set.\n\n");
+    print("Congratulations! We're all set.\n");
     print("Rebooting in 5 seconds...\n");
     timer_sleep(SHUTDOWN_PAUSE_MS);
     power_reboot();

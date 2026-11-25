@@ -609,6 +609,12 @@ void command_execute(char* line) {
             kprintf("Size: %d MB (%d sectors)\n",
                     (int)(diskfs_total_sectors() / 2048),
                     (int)diskfs_total_sectors());
+
+            if (diskfs_ram_only()) {
+                print("Mode: RAM only; the disk was left untouched.\n");
+                break;
+            }
+
             kprintf("Used: %d KB in %d of %d entries\n",
                     (int)(diskfs_used_sectors() / 2), (int)diskfs_entry_count(),
                     (int)diskfs_entry_capacity());

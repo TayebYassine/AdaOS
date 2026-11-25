@@ -67,6 +67,10 @@ static int blank = 0;
 // may be written over it then: whatever is there is still the user's data, and
 // the in-memory tree stays in RAM until the disk is formatted on purpose.
 static int writable = 0;
+
+// Set when setup was told to only try AdaOS out: the disk, blank or not, is
+// left exactly as it is and this session works in RAM.
+static int ram_only = 0;
 static uint32_t saved_entries = 0;
 static uint32_t used_sectors = 0;
 static uint32_t planned = 0;
@@ -536,8 +540,17 @@ int diskfs_write_tree(void (*progress)(int percent)) {
     return 1;
 }
 
+/* Keep this session in RAM and never write to the disk. */
+void diskfs_use_ram(void) { ram_only = 1; }
+
+int diskfs_ram_only(void) { return ram_only; }
+
 /* Mount the disk file system; a blank disk is formatted and given the tree. */
 int diskfs_init(void) {
+    if (ram_only) {
+        return 0;
+    }
+
     if (!diskfs_probe()) {
         return 0;
     }
@@ -570,6 +583,9 @@ int diskfs_init(void) {
 int diskfs_sync(void) {
     if (!present) {
         return 0;
+    }
+    if (ram_only) {
+        return 1;
     }
     if (!fs_dirty()) {
         return 1;
