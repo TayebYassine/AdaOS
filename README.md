@@ -26,6 +26,40 @@ This operating system has most of the important features, such as file managemen
 
 ## View
 
+<details>
+<summary><b>First boot and setup on VirtualBox</b></summary>
+  On boot, AdaOS will detect if the disk has a file system or not. If it doesn't, it will show the setup menu, as shown below. It will ask basic yes/no questions for configuring the operating system.
+
+  Once the setup is done, it will reboot into the AdaOS shell.
+
+  <img src="./assets/first-boot.gif" />
+</details>
+
+<details>
+<summary><b>Using commands in the shell</b></summary>
+  AdaOS is a CLI operating system, not a GUI operating system. You have to type every command with your keyboard, and it currently reads PS/2 keyboard keys only.
+
+  <img src="./assets/using-commands.gif" />
+</details>
+
+<details>
+<summary><b>Snake and Tetris!</b></summary>
+  AdaOS provides you with two games, Snake and Tetris!
+
+  - Snake: Grow your tail by eating apples, which are red-colored character cells on your screen.
+  - Tetris: Tetrominoes are dropping down; try to make a line or more to be filled to get cleared and earn a score.
+
+  <img src="./assets/games.gif" />
+</details>
+
+<details>
+<summary><b>The AdaScript scripting language</b></summary>
+  In shell, you can only run one command at once. A new scripting language was introduced called <b>AdaScript</b>, which executes an instruction each by line, with new special-specific commands and functions such as `define` to register a variable and its value in RAM, specific bit-sized datatypes such as `int8`, `uint16`, `int32`, etc.
+
+  If you've accepted sample files on setup, run the command `ls` or `tree` to see a file named demo.as. This file contains every instruction added into the script language. Use the command `write demo.as` to edit it and use `run demo.as` to execute it.
+
+  <img src="./assets/adascript.gif" />
+</details>
 
 
 ## Requirements
