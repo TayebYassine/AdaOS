@@ -8,7 +8,7 @@
 // The AdaScript expression lexer: it walks one line of source and reports the
 // next token, skipping spaces. Numbers become integers, double quotes collect
 // a string (with \n, \t, \" and \\ escapes), and words become identifiers or
-// the keywords true, false, null, and, or, not and len.
+// the keywords true, false, null, and, or and not.
 
 /* Token kinds the lexer reports. */
 enum as_tok_kind {
@@ -40,7 +40,6 @@ enum as_tok_kind {
     TOK_LBRACE,
     TOK_RBRACE,
     TOK_COMMA,
-    TOK_LEN,
 };
 
 /* One token, with its decoded text and integer value. */

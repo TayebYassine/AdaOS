@@ -3,6 +3,7 @@
 #include "as_command.h"
 #include "as_env.h"
 #include "as_error.h"
+#include "as_functions.h"
 #include "as_lexer.h"
 #include "as_value.h"
 #include "command.h"
@@ -21,10 +22,10 @@ static struct as_value as_parse_unary(struct as_env* env, struct as_lexer* lex);
 static struct as_value as_parse_primary(struct as_env* env,
                                         struct as_lexer* lex);
 
-// Brackets, arrays, len() and the unary operators all parse themselves
-// recursively, and every level costs a whole chain of stack frames. A single
-// line of script can therefore nest deep enough to run off the 16 KiB task
-// stack, so the parser counts its levels and stops before that happens.
+// Function calls, brackets, arrays and the unary operators all parse
+// themselves recursively, and every level costs a whole chain of stack frames.
+// A single line of script can therefore nest deep enough to run off the 16 KiB
+// task stack, so the parser counts its levels and stops before that happens.
 #define AS_MAX_NESTING 6
 
 /* Claim one nesting level; 0 (with the error set) when it is too deep. */
@@ -323,6 +324,47 @@ static struct as_value as_parse_unary(struct as_env* env,
     return as_parse_primary(env, lex);
 }
 
+/* A built-in function call: the name, then exactly the arguments it takes.
+ * Each argument binds tighter than any operator, so "lengthof name + 1" adds
+ * one to the length instead of measuring the joined text. */
+static struct as_value as_parse_function(struct as_env* env,
+                                         struct as_lexer* lex,
+                                         const char* name) {
+    struct as_value args[AS_FUNCTION_MAX_ARGS];
+    struct as_value result;
+    int arity = as_function_arity(name);
+    int got = 0;
+    int failed = 0;
+
+    for (; got < arity; got++) {
+        if (!as_nest(env, lex)) {
+            failed = 1;
+            break;
+        }
+        args[got] = as_parse_unary(env, lex);
+        lex->depth--;
+        if (env->error) {
+            failed = 1;
+            break;
+        }
+    }
+
+    if (failed) {
+        for (int i = 0; i < got; i++) {
+            as_value_free(&args[i]);
+        }
+        return as_error_value();
+    }
+
+    result = as_function_call(env, name, args, arity);
+
+    for (int i = 0; i < arity; i++) {
+        as_value_free(&args[i]);
+    }
+
+    return result;
+}
+
 static struct as_value as_parse_primary(struct as_env* env,
                                         struct as_lexer* lex) {
     struct as_value val;
@@ -381,37 +423,6 @@ static struct as_value as_parse_primary(struct as_env* env,
         if (lex->cur.kind == TOK_RPAREN) {
             as_lexer_next(lex);
         }
-        return val;
-    }
-
-    if (lex->cur.kind == TOK_LEN) {
-        struct as_value target;
-        int len_val = 0;
-
-        as_lexer_next(lex);
-        if (lex->cur.kind == TOK_LPAREN) {
-            as_lexer_next(lex);
-        }
-
-        if (!as_nest(env, lex)) {
-            return as_error_value();
-        }
-
-        target = as_parse_or(env, lex);
-        lex->depth--;
-
-        if (lex->cur.kind == TOK_RPAREN) {
-            as_lexer_next(lex);
-        }
-        if (target.type == AS_TYPE_STRING && target.u.str != 0) {
-            len_val = (int)strlen(target.u.str);
-        } else if (target.type == AS_TYPE_ARRAY) {
-            len_val = target.u.arr.count;
-        }
-        as_value_free(&target);
-        val.type = AS_TYPE_INT32;
-        val.is_null = 0;
-        val.u.i32 = len_val;
         return val;
     }
 
@@ -478,6 +489,10 @@ static struct as_value as_parse_primary(struct as_env* env,
 
         struct as_var* var = as_env_lookup(env, name);
         if (var == 0) {
+            if (as_function_arity(name) > 0) {
+                return as_parse_function(env, lex, name);
+            }
+
             // A command that prints text acts as a string value here, so
             // "pwd + \"/programs\"" reads the directory the command shows.
             if (command_returns_output(name)) {

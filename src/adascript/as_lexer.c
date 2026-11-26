@@ -116,8 +116,6 @@ void as_lexer_next(struct as_lexer* lex) {
             lex->cur.kind = TOK_OR;
         } else if (strcmp(lex->cur.text, "not") == 0) {
             lex->cur.kind = TOK_NOT;
-        } else if (strcmp(lex->cur.text, "len") == 0) {
-            lex->cur.kind = TOK_LEN;
         } else {
             lex->cur.kind = TOK_IDENT;
         }

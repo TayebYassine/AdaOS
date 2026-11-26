@@ -14,7 +14,7 @@ define w: uint32[] = { 10, 20, 30 }
 define names: string[] = { "Alice", "Bob", "Charlie" }
 
 print "Array w:", w endl
-print "Array w length:", len(w) endl
+print "Array w length:", sizeof w endl
 print "First element w[0]:", w[0] endl
 print "Second element w[1]:", w[1] endl
 
@@ -70,6 +70,15 @@ print "Age:", a endl
 print "Name:", b endl
 print "Port:", c endl
 print "Married:", e endl
+
+# Built-in functions, called by name without parentheses
+define word: string = "AdaOS"
+print "lengthof word:", lengthof word endl
+print "toupper word:", toupper word endl
+print "startswith:", startswith word "Ada" endl
+print "find OS:", find word "OS" endl
+print "tostring 123:", tostring 123 endl
+print "toint 42:", toint "42" endl
 
 # Variables deletion
 delete a

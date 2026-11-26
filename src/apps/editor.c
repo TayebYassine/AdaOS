@@ -25,19 +25,27 @@
 #define COLOR_STRING 0x02   // green: the text between double quotes
 #define COLOR_TYPE 0x04     // red: data type names
 #define COLOR_COMMENT 0x07  // light gray: from a "#" to the end of the line
+#define COLOR_FUNCTION 0x0E  // yellow: built-in functions
 
 /* Words AdaScript runs its own syntax with; none of them is a shell command. */
 static const char* const highlight_keywords[] = {
     "and",       "break",      "continue",  "do",        "done",
     "elif",      "else",       "endfor",    "endif",     "endwhile",
     "endl",      "exit",       "false",     "fi",        "for",
-    "from",      "if",         "in",        "len",       "not",
-    "null",      "or",         "return",    "step",      "then",
-    "to",        "true",       "typeof",    "while",     "range",
+    "from",      "if",         "in",        "not",       "null",
+    "or",        "return",     "step",      "then",      "to",
+    "true",      "typeof",     "while",     "range",
     "color",     "black",      "blue",      "green",     "cyan",
     "red",       "magenta",    "brown",     "lightgray", "darkgray",
     "lightblue", "lightgreen", "lightcyan", "lightred",  "lightmagenta",
     "yellow",    "white"};
+
+/* The functions the expression parser calls by name. */
+static const char* const highlight_functions[] = {
+    "lengthof", "sizeof",    "find",       "startswith", "endswith",
+    "includes", "toupper",   "tolower",    "tostring",   "toint",
+    "tobool",   "isnumeric", "isalpha",    "isalphanumeric",
+    "replace"};
 
 /* Shell built-ins and the AdaScript statement keywords. */
 static const char* const highlight_commands[] = {
@@ -129,6 +137,12 @@ static uint8_t word_color(const char* word, uint32_t length) {
                      (uint32_t)(sizeof(highlight_keywords) /
                                 sizeof(highlight_keywords[0])))) {
         return COLOR_KEYWORD;
+    }
+
+    if (word_in_list(word, length, highlight_functions,
+                     (uint32_t)(sizeof(highlight_functions) /
+                                sizeof(highlight_functions[0])))) {
+        return COLOR_FUNCTION;
     }
 
     if (word_in_list(word, length, highlight_commands,
