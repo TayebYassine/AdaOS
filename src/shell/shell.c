@@ -1,5 +1,6 @@
 #include "shell.h"
 
+#include "adascript.h"
 #include "clock.h"
 #include "command.h"
 #include "keyboard.h"
@@ -46,6 +47,13 @@ void shell_read_line(char* line) {
     line[0] = '\0';
 
     for (;;) {
+        // Ctrl+E stops a running script even while it is waiting for a line.
+        if (adascript_interrupt_requested()) {
+            line[0] = '\0';
+            print_char('\n');
+            return;
+        }
+
         int key = keyboard_getchar();
 
         // Enter: terminate the string and move down.

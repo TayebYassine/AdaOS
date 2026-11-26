@@ -1,5 +1,6 @@
 #include "as_input.h"
 
+#include "adascript.h"
 #include "as_env.h"
 #include "as_error.h"
 #include "as_value.h"
@@ -384,6 +385,10 @@ void as_exec_input(struct as_env* env, const char* stmt) {
 
     for (;;) {
         shell_read_line(input_line);
+
+        if (adascript_interrupt_requested()) {
+            return;
+        }
 
         if (type == AS_TYPE_STRING) {
             int len = (int)strlen(input_line);

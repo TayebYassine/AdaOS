@@ -2,10 +2,12 @@
 
 #include <stdint.h>
 
+#include "adascript.h"
 #include "as_error.h"
 #include "as_parser.h"
 #include "as_value.h"
 #include "clock.h"
+#include "keyboard.h"
 #include "kmalloc.h"
 #include "libc.h"
 #include "screen.h"
@@ -377,6 +379,31 @@ void as_exec_erasecell(struct as_env* env, const char* stmt) {
     }
 
     screen_fill_rect(row1 - 1, col1 - 1, row2 - 1, col2 - 1, ' ', 0x0F);
+}
+
+/* Execute a "keepalive" statement: keep the script running until Ctrl+E stops
+ * it. Every other key is ignored. Ctrl+E is noticed even when this statement is
+ * never reached, so this loop only has to stay alive and let it be seen. */
+void as_exec_keepalive(struct as_env* env, const char* stmt) {
+    const char* p = stmt + 9;
+
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    if (*p != '\0') {
+        as_errorf(env, "keepalive takes no arguments.");
+        return;
+    }
+
+    for (;;) {
+        if (adascript_interrupt_requested()) {
+            env->exit_flag = 1;
+            return;
+        }
+        // Block until a key arrives; the flag above is what actually ends the
+        // script, so a Ctrl+E left over from before the run is harmless.
+        (void)keyboard_getchar();
+    }
 }
 
 /* Put the shell's screen back if the run still owns it. */

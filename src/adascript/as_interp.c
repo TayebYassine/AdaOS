@@ -1,5 +1,6 @@
 #include "as_interp.h"
 
+#include "adascript.h"
 #include "as_command.h"
 #include "as_env.h"
 #include "as_error.h"
@@ -69,6 +70,9 @@ static const char* as_mode_conflict(enum as_script_mode mode,
         }
         if (as_stmt_is(stmt, "erasecell")) {
             return "erasecell";
+        }
+        if (as_stmt_is(stmt, "keepalive")) {
+            return "keepalive";
         }
         if (as_stmt_is(stmt, "mode")) {
             enum as_script_mode declared;
@@ -267,8 +271,7 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
         if (body_len > 0 && body[body_len - 1] == '+') {
             body[--body_len] = '\0';
             while (body_len > 0 &&
-                   (body[body_len - 1] == ' ' ||
-                    body[body_len - 1] == '\t')) {
+                   (body[body_len - 1] == ' ' || body[body_len - 1] == '\t')) {
                 body[--body_len] = '\0';
             }
         }
@@ -471,6 +474,11 @@ static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
         if (env->error) {
             return -1;
         }
+        // Ctrl+E stops the whole script, in either mode, between statements.
+        if (adascript_interrupt_requested()) {
+            env->exit_flag = 1;
+            return 0;
+        }
         if (env->exit_flag || env->break_flag || env->continue_flag) {
             return 0;
         }
@@ -567,6 +575,14 @@ static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
         if (strncmp(stmt, "erasecell", 9) == 0 &&
             (stmt[9] == ' ' || stmt[9] == '\0')) {
             as_exec_erasecell(env, stmt);
+            i++;
+            continue;
+        }
+
+        if (strncmp(stmt, "keepalive", 9) == 0 &&
+            (stmt[9] == ' ' || stmt[9] == '\t' || stmt[9] == ';' ||
+             stmt[9] == '\0')) {
+            as_exec_keepalive(env, stmt);
             i++;
             continue;
         }
@@ -936,10 +952,18 @@ static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
     return 0;
 }
 
-/* Run a block, counting the nesting so a script cannot recurse off the stack. */
+/* Run a block, counting the nesting so a script cannot recurse off the stack.
+ */
 int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                   int end) {
     int result;
+
+    // Checked here as well as between statements so an empty loop body still
+    // notices Ctrl+E on every turn.
+    if (adascript_interrupt_requested()) {
+        env->exit_flag = 1;
+        return 0;
+    }
 
     if (env->block_depth >= AS_MAX_BLOCK_DEPTH) {
         as_errorf(env, "blocks nest deeper than %d levels.",

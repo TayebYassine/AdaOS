@@ -34,6 +34,10 @@ static int ctrl_held = 0;
 static int caps_lock = 0;
 static int extended_prefix = 0;
 
+/* Set by IRQ1 when Ctrl+E is pressed, so a running script can stop even when it
+ * is not reading the keyboard. */
+static volatile int ctrl_e_seen = 0;
+
 /* Scancode set 1 -> ASCII without Shift; unmapped keys stay 0. */
 static const char normal_map[128] = {
     0,    0,                     // 0x00 unused, 0x01 Escape
@@ -186,6 +190,9 @@ static void keyboard_irq(struct interrupt_frame* frame) {
     uint8_t scancode = inb(KEYBOARD_DATA_PORT);
     int key = translate(scancode);
 
+    if (key == KEY_CTRL_E) {
+        ctrl_e_seen = 1;
+    }
     if (key != 0) {
         buffer_push(key);
     }
@@ -227,3 +234,9 @@ int keyboard_getchar(void) {
         interrupt_wait();
     }
 }
+
+/* Was Ctrl+E pressed since the last keyboard_clear_ctrl_e()? */
+int keyboard_ctrl_e_seen(void) { return ctrl_e_seen; }
+
+/* Forget an earlier Ctrl+E press. */
+void keyboard_clear_ctrl_e(void) { ctrl_e_seen = 0; }

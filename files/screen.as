@@ -48,6 +48,5 @@ sleep 1
 erasecell 15 5
 writecell 15 5 "erasecell 15 5 removed the X" color lightgray
 
-# The screen stays up for a moment, then the shell's screen comes back on its
-# own; there is no "mode cli" needed at the end.
-sleep 3
+# Never return to the shell until CTRL+E is triggered
+keepalive

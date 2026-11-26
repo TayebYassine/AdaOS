@@ -9,6 +9,7 @@
 #include "as_screen.h"
 #include "as_value.h"
 #include "fs.h"
+#include "keyboard.h"
 #include "kmalloc.h"
 #include "libc.h"
 #include "screen.h"
@@ -17,6 +18,14 @@
 #define AS_MAX_RUN_DEPTH 8
 
 static int as_run_depth = 0;
+
+/* Is an AdaScript running right now? */
+int adascript_is_running(void) { return as_run_depth > 0; }
+
+/* Has Ctrl+E asked the running script to stop? */
+int adascript_interrupt_requested(void) {
+    return as_run_depth > 0 && keyboard_ctrl_e_seen();
+}
 
 /* Run an AdaScript string. */
 int adascript_run_string(const char* script) {
@@ -27,6 +36,10 @@ int adascript_run_string(const char* script) {
     if (as_run_depth >= AS_MAX_RUN_DEPTH) {
         print("Error: scripts are nested too deeply (does one run itself?).\n");
         return -1;
+    }
+
+    if (as_run_depth == 0) {
+        keyboard_clear_ctrl_e();
     }
     as_run_depth++;
 
@@ -153,9 +166,9 @@ int adascript_run_string(const char* script) {
     int result = 0;
     enum as_script_mode declared = AS_MODE_NONE;
     const char* mode_name = 0;
-    int mode_line = total > 0 ? as_parse_mode_line(lines[0].text, &declared,
-                                                   &mode_name)
-                              : 0;
+    int mode_line =
+        total > 0 ? as_parse_mode_line(lines[0].text, &declared, &mode_name)
+                  : 0;
 
     if (mode_line == 0) {
         env.cur_line = total > 0 ? lines[0].orig_line : 1;
@@ -189,6 +202,12 @@ int adascript_run_string(const char* script) {
     kfree(script_copy);
     kfree(lines);
     as_run_depth--;
+
+    if (as_run_depth == 0 && env.script_mode == AS_MODE_CLI &&
+        keyboard_ctrl_e_seen()) {
+        print(" ^E (Abort)\n");
+        keyboard_clear_ctrl_e();
+    }
 
     return result == 0 && env.error == 0 ? 0 : -1;
 }

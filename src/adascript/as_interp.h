@@ -5,9 +5,9 @@
 
 // The AdaScript statement interpreter: it walks the prepared lines, groups
 // them into for, while and if blocks, and runs the simple statements - define,
-// delete, print, input, mode, writecell, erasecell, assignment and shell
-// commands. Break, continue, return and errors travel through the environment
-// flags.
+// delete, print, input, mode, writecell, erasecell, keepalive, assignment and
+// shell commands. Break, continue, return and errors travel through the
+// environment flags.
 
 /* One parsed line in the script. */
 struct as_line {

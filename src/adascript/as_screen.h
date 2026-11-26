@@ -7,7 +7,9 @@
 // screen to the script: the shell's cells, cursor and clock bar are saved and
 // put back when the run ends, even after an error. "writecell" draws text at
 // one cell with an optional colour and "erasecell" clears one cell or the
-// rectangle between two corners. "mode cli" gives the screen back early.
+// rectangle between two corners. "keepalive" keeps the script running until it
+// is stopped, and "mode cli" gives the screen back early. Ctrl+E stops any
+// running script at once, whether or not it uses "keepalive".
 
 /* Parse a "mode <name>" statement. Returns 1 and sets *mode for a known mode,
  * 0 when the line is not a mode statement, and -1 when the name is unknown.
@@ -23,6 +25,10 @@ void as_exec_writecell(struct as_env* env, const char* stmt);
 
 /* Execute an "erasecell <row> <column> [<row> <column>]" statement. */
 void as_exec_erasecell(struct as_env* env, const char* stmt);
+
+/* Execute a "keepalive" statement: keep the script alive until Ctrl+E stops
+ * it, then end the script cleanly. */
+void as_exec_keepalive(struct as_env* env, const char* stmt);
 
 /* Put the shell's screen back if the run still owns it, reprinting any error
  * on the restored screen. */

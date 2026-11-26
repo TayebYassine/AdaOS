@@ -29,6 +29,8 @@
 #define COMMANDS_PER_PAGE 6
 /* The longest sleep acceptable: 86400 seconds (24 hours). */
 #define MAX_SLEEP_SECONDS 86400
+/* While a script runs, sleep in short steps so Ctrl+E can stop it. */
+#define SCRIPT_SLEEP_CHUNK_MS 50
 /* Number of elements in an array. */
 #define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -446,7 +448,25 @@ void command_execute(char* line) {
                 break;
             }
 
-            scheduler_sleep_ms(seconds * 1000);
+            if (adascript_is_running()) {
+                uint32_t total_ms = seconds * 1000;
+                uint32_t slept = 0;
+
+                while (slept < total_ms) {
+                    uint32_t chunk = total_ms - slept;
+
+                    if (chunk > SCRIPT_SLEEP_CHUNK_MS) {
+                        chunk = SCRIPT_SLEEP_CHUNK_MS;
+                    }
+                    if (adascript_interrupt_requested()) {
+                        break;
+                    }
+                    scheduler_sleep_ms(chunk);
+                    slept += chunk;
+                }
+            } else {
+                scheduler_sleep_ms(seconds * 1000);
+            }
 
             break;
         }
