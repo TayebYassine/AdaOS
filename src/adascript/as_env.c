@@ -72,7 +72,7 @@ void as_env_cleanup(struct as_env* env) {
     env->vars = 0;
 }
 
-/* Parse type name string like "int8", "string", "uint32[]". */
+/* Parse type name string like "int8", "float", "string", "uint32[]". */
 int as_parse_type(const char* s, enum as_type* out_type,
                          enum as_type* out_elem) {
     int len = (int)strlen(s);
@@ -106,6 +106,8 @@ int as_parse_type(const char* s, enum as_type* out_type,
         t = AS_TYPE_INT32;
     } else if (strcmp(base, "uint32") == 0 || strcmp(base, "uint") == 0) {
         t = AS_TYPE_UINT32;
+    } else if (strcmp(base, "float") == 0) {
+        t = AS_TYPE_FLOAT;
     } else if (strcmp(base, "string") == 0) {
         t = AS_TYPE_STRING;
     } else if (strcmp(base, "bool") == 0) {

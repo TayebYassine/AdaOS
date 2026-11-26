@@ -4,6 +4,7 @@
 
 #include "adascript.h"
 #include "as_error.h"
+#include "as_event.h"
 #include "as_parser.h"
 #include "as_value.h"
 #include "clock.h"
@@ -322,6 +323,18 @@ void as_exec_writecell(struct as_env* env, const char* stmt) {
     }
 
     screen_puts_at(row - 1, col - 1, draw, attribute);
+
+    // The cursor lands just past the text the script drew, so print() in
+    // screen mode and the cursormove listener follow the drawing.
+    {
+        int end_col = col - 1 + (int)strlen(draw);
+
+        if (end_col > SCREEN_COLS - 1) {
+            end_col = SCREEN_COLS - 1;
+        }
+        screen_move_to(row - 1, end_col);
+    }
+
     as_value_free(&val);
 }
 
@@ -387,6 +400,91 @@ void as_exec_clearscreen(struct as_env* env, const char* stmt) {
     screen_clear();
 }
 
+/* Execute a "cursorconf <setting> <bool>" statement. "visible" shows or hides
+ * the hardware cursor; "fixed" decides whether the arrow keys move it. */
+void as_exec_cursorconf(struct as_env* env, const char* stmt) {
+    char line[AS_LINE_MAX];
+    char expr[AS_LINE_MAX];
+    char* args[AS_SCREEN_ARGS];
+    struct as_value val;
+    int count;
+    int on;
+
+    if (!env->screen_mode) {
+        as_errorf(env, "'cursorconf' is only available in screen mode.");
+        return;
+    }
+
+    as_copy_text(line, stmt, sizeof(line));
+    count = as_split_args(line, args, AS_SCREEN_ARGS);
+
+    if (count < 3) {
+        as_errorf(env,
+                  "cursorconf needs 'visible' or 'fixed' and true or false.");
+        return;
+    }
+
+    if (!as_same_word(args[1], "visible") && !as_same_word(args[1], "fixed")) {
+        as_errorf(env, "unknown cursor setting '%s'; use 'visible' or 'fixed'.",
+                  args[1]);
+        return;
+    }
+
+    as_join_args(expr, sizeof(expr), args, 2, count - 1);
+    val = as_eval_expression(env, expr);
+    if (env->error) {
+        as_value_free(&val);
+        return;
+    }
+    on = as_value_is_truthy(&val);
+    as_value_free(&val);
+
+    if (as_same_word(args[1], "visible")) {
+        screen_set_cursor_visible(on);
+    } else {
+        env->cursor_fixed = on;
+    }
+}
+
+/* Execute a "setcursor <row> <column>" statement: put the hardware cursor on
+ * that cell, so a script can jump it over more than one cell at a time. */
+void as_exec_setcursor(struct as_env* env, const char* stmt) {
+    char line[AS_LINE_MAX];
+    char* args[AS_SCREEN_ARGS];
+    int count;
+    int row;
+    int col;
+
+    if (!env->screen_mode) {
+        as_errorf(env, "'setcursor' is only available in screen mode.");
+        return;
+    }
+
+    as_copy_text(line, stmt, sizeof(line));
+    count = as_split_args(line, args, AS_SCREEN_ARGS);
+
+    if (count != 3) {
+        as_errorf(env, "setcursor needs a row and a column.");
+        return;
+    }
+
+    if (!as_arg_number(env, args[1], &row) ||
+        !as_arg_number(env, args[2], &col)) {
+        return;
+    }
+
+    if (row < 1 || row > SCREEN_ROWS) {
+        as_errorf(env, "row %d is outside 1..%d.", row, SCREEN_ROWS);
+        return;
+    }
+    if (col < 1 || col > SCREEN_COLS) {
+        as_errorf(env, "column %d is outside 1..%d.", col, SCREEN_COLS);
+        return;
+    }
+
+    screen_move_to(row - 1, col - 1);
+}
+
 /* Execute a "keepalive" statement: keep the script running until Ctrl+E stops
  * it. Every other key is ignored. Ctrl+E is noticed even when this statement is
  * never reached, so this loop only has to stay alive and let it be seen. */
@@ -398,6 +496,15 @@ void as_exec_keepalive(struct as_env* env, const char* stmt) {
     }
     if (*p != '\0') {
         as_errorf(env, "keepalive takes no arguments.");
+        return;
+    }
+
+    // A screen script keeps its screen, so keepalive is the event loop: it
+    // delivers keypress and cursormove events and lets the arrow keys move the
+    // cursor until Ctrl+E stops the script.
+    if (env->screen_mode) {
+        as_event_loop(env);
+        env->exit_flag = 1;
         return;
     }
 

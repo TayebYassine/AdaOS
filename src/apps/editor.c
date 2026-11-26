@@ -29,11 +29,13 @@
 
 /* Words AdaScript runs its own syntax with; none of them is a shell command. */
 static const char* const highlight_keywords[] = {
-    "and",       "break",      "continue",  "do",        "done",
-    "elif",      "else",       "endfor",    "endif",     "endwhile",
-    "endl",      "exit",       "false",     "fi",        "for",
-    "from",      "if",         "in",        "not",       "null",
-    "or",        "return",     "step",      "then",      "to",
+    "and",       "break",      "cancel",    "continue",  "cursorconf",
+    "do",        "done",       "elif",      "else",      "endfor",
+    "endif",     "endon",
+    "endwhile",  "endl",       "exit",      "false",     "fi",
+    "for",       "from",       "if",        "in",        "not",
+    "null",      "on",         "or",        "return",    "step",
+    "then",      "to",
     "true",      "typeof",     "while",     "range",
     "color",     "black",      "blue",      "green",     "cyan",
     "red",       "magenta",    "brown",     "lightgray", "darkgray",
@@ -55,12 +57,12 @@ static const char* const highlight_commands[] = {
     "pwd",       "reboot",  "rm",      "run",      "setdate",     "settime",
     "shutdown",  "sleep",   "snake",   "tasks",    "tetris",      "time",
     "tree",      "uptime",  "ver",     "write",    "writecell",   "erasecell",
-    "keepalive"};
+    "keepalive", "setcursor"};
 
 /* The names the AdaScript parser accepts after a "define" or a ":". */
 static const char* const highlight_types[] = {
-    "bool",   "int",  "int8",  "int16",  "int32",
-    "string", "uint", "uint8", "uint16", "uint32",
+    "bool",   "float", "int",   "int8",  "int16", "int32",
+    "string", "uint",  "uint8", "uint16", "uint32",
 };
 
 static char* lines = 0;  // MAX_LINES * LINE_SIZE bytes from the heap

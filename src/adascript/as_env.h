@@ -1,6 +1,7 @@
 #ifndef ADAOS_ADASCRIPT_ENV_H
 #define ADAOS_ADASCRIPT_ENV_H
 
+#include "as_event.h"
 #include "as_value.h"
 
 // The AdaScript environment: the variables a running script can see, kept in a
@@ -43,6 +44,12 @@ struct as_env {
     int saved_row;          // and the cursor, top row and cursor visibility
     int saved_col;
     int saved_top;
+
+    struct as_line* lines;  // prepared program the listener bodies live in
+    struct as_listener listeners[AS_EVENT_COUNT];  // registered handlers
+    int cursor_fixed;  // "cursorconf fixed true": arrow keys leave it alone
+    int in_handler;    // 1 while a listener body runs
+    int cancel_flag;   // set by a handler's "cancel" statement
 };
 
 /* Find a variable by name in the environment. */

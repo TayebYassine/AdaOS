@@ -447,6 +447,16 @@ void screen_move_to(int row, int col) {
     update_cursor();
 }
 
+/* Read the cell the cursor is on. */
+void screen_get_cursor(int* row, int* col) {
+    if (row != 0) {
+        *row = cursor_row;
+    }
+    if (col != 0) {
+        *col = cursor_col;
+    }
+}
+
 /* Copy the whole screen and the cursor position out. */
 void screen_save(uint16_t* cells, int* row, int* col) {
     volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;

@@ -47,6 +47,30 @@ void as_lexer_next(struct as_lexer* lex) {
             }
         }
 
+        // A fractional part turns the literal into a float. The dot only
+        // counts when a digit follows it, so a trailing dot stays a token of
+        // its own for whoever reads the line.
+        if (!hex && lex->src[lex->pos] == '.' &&
+            lex->src[lex->pos + 1] >= '0' &&
+            lex->src[lex->pos + 1] <= '9') {
+            float fval = (float)val;
+            float scale = 1.0f;
+
+            lex->pos++;
+            while (lex->src[lex->pos] >= '0' &&
+                   lex->src[lex->pos] <= '9') {
+                scale *= 10.0f;
+                fval = fval * 10.0f + (float)(lex->src[lex->pos] - '0');
+                lex->pos++;
+            }
+            fval /= scale;
+
+            lex->cur.kind = TOK_FLOAT;
+            lex->cur.float_val = fval;
+            lex->cur.text[0] = '\0';
+            return;
+        }
+
         lex->cur.kind = TOK_INT;
         lex->cur.int_val = (int32_t)val;
         itoa((int32_t)val, lex->cur.text);

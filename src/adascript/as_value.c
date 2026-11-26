@@ -37,6 +37,9 @@ void as_value_init(struct as_value* val, enum as_type type,
         case AS_TYPE_UINT32:
             val->u.u32 = 0;
             break;
+        case AS_TYPE_FLOAT:
+            val->u.f = 0.0f;
+            break;
         case AS_TYPE_BOOL:
             val->u.boolean = 0;
             break;
@@ -178,10 +181,83 @@ int32_t as_value_to_i32(const struct as_value* val) {
             return (int32_t)val->u.u32;
         case AS_TYPE_BOOL:
             return val->u.boolean ? 1 : 0;
+        case AS_TYPE_FLOAT:
+            // The C cast of a value outside the range is undefined, and a
+            // float that does not compare equal to itself is a NaN.
+            if (val->u.f != val->u.f) {
+                return 0;
+            }
+            if (val->u.f >= 2147483647.0f) {
+                return INT32_MAX;
+            }
+            if (val->u.f <= -2147483648.0f) {
+                return INT32_MIN;
+            }
+            return (int32_t)val->u.f;
         case AS_TYPE_STRING:
             return val->u.str ? atoi(val->u.str) : 0;
         default:
             return 0;
+    }
+}
+
+/* Read decimal text as a float, stopping at the first character that is not
+ * part of the number, so "3.5x" reads as 3.5. */
+static float as_text_to_float(const char* text) {
+    float value = 0.0f;
+    float scale = 0.1f;
+    int sign = 1;
+    int seen_digit = 0;
+    const char* p = text;
+
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    if (*p == '+' || *p == '-') {
+        sign = (*p == '-') ? -1 : 1;
+        p++;
+    }
+    while (*p >= '0' && *p <= '9') {
+        value = value * 10.0f + (float)(*p - '0');
+        seen_digit = 1;
+        p++;
+    }
+    if (*p == '.') {
+        p++;
+        while (*p >= '0' && *p <= '9') {
+            value += (float)(*p - '0') * scale;
+            scale *= 0.1f;
+            seen_digit = 1;
+            p++;
+        }
+    }
+
+    return seen_digit ? (float)sign * value : 0.0f;
+}
+
+/* Convert value to a float. */
+float as_value_to_float(const struct as_value* val) {
+    if (val->is_null) {
+        return 0.0f;
+    }
+
+    switch (val->type) {
+        case AS_TYPE_INT8:
+        case AS_TYPE_INT16:
+        case AS_TYPE_INT32:
+            return (float)val->u.i32;
+        case AS_TYPE_UINT8:
+        case AS_TYPE_UINT16:
+        case AS_TYPE_UINT32:
+            return (float)val->u.u32;
+        case AS_TYPE_FLOAT:
+            return val->u.f;
+        case AS_TYPE_BOOL:
+            return val->u.boolean ? 1.0f : 0.0f;
+        case AS_TYPE_STRING:
+            return val->u.str ? as_text_to_float(val->u.str) : 0.0f;
+        default:
+            return 0.0f;
     }
 }
 
@@ -196,6 +272,14 @@ static uint32_t as_value_to_u32(const struct as_value* val) {
         case AS_TYPE_UINT16:
         case AS_TYPE_UINT32:
             return val->u.u32;
+        case AS_TYPE_FLOAT:
+            if (val->u.f != val->u.f || val->u.f <= 0.0f) {
+                return 0;
+            }
+            if (val->u.f >= 4294967295.0f) {
+                return UINT32_MAX;
+            }
+            return (uint32_t)val->u.f;
         case AS_TYPE_INT8:
         case AS_TYPE_INT16:
         case AS_TYPE_INT32:
@@ -226,6 +310,8 @@ int as_value_is_truthy(const struct as_value* val) {
         case AS_TYPE_UINT16:
         case AS_TYPE_UINT32:
             return val->u.u32 != 0;
+        case AS_TYPE_FLOAT:
+            return val->u.f != 0.0f;
         case AS_TYPE_STRING:
             return val->u.str != 0 && val->u.str[0] != '\0';
         case AS_TYPE_ARRAY:
@@ -286,6 +372,93 @@ void as_copy_text(char* buf, const char* src, int max) {
     buf[i] = '\0';
 }
 
+/* Write a float as a decimal number with up to four decimal places and no
+ * trailing zeros: 690, 3.5, -0.125. */
+static void as_format_float(float value, char* buf, int max) {
+    char whole[16];
+    char frac[8];
+    int32_t digits = 0;
+    int32_t whole_part;
+    float rest;
+    int places = 4;
+    int negative = 0;
+    int pos = 0;
+
+    if (max <= 0) {
+        return;
+    }
+
+    // A NaN never compares equal to itself. Anything at a billion or beyond
+    // has more digits than a float holds exactly, so it is named instead of
+    // printed as a made-up number.
+    if (value != value) {
+        as_copy_text(buf, "nan", max);
+        return;
+    }
+    if (value >= 1000000000.0f || value <= -1000000000.0f) {
+        as_copy_text(buf, "inf", max);
+        return;
+    }
+
+    if (value < 0.0f) {
+        negative = 1;
+        value = -value;
+    }
+
+    whole_part = (int32_t)value;
+    rest = value - (float)whole_part;
+
+    // Four digits at most, then rounded on the fifth.
+    for (int i = 0; i < places; i++) {
+        int32_t digit;
+
+        rest *= 10.0f;
+        digit = (int32_t)rest;
+        if (digit > 9) {
+            digit = 9;
+        }
+        digits = digits * 10 + digit;
+        rest -= (float)digit;
+    }
+    if (rest >= 0.5f) {
+        digits++;
+        if (digits >= 10000) {
+            digits -= 10000;
+            whole_part++;
+        }
+    }
+    while (places > 0 && digits % 10 == 0) {
+        digits /= 10;
+        places--;
+    }
+
+    itoa(whole_part, whole);
+
+    if (negative && pos < max - 1) {
+        buf[pos++] = '-';
+    }
+    for (int i = 0; whole[i] != '\0' && pos < max - 1; i++) {
+        buf[pos++] = whole[i];
+    }
+
+    if (places > 0) {
+        int32_t left = digits;
+
+        for (int i = places - 1; i >= 0; i--) {
+            frac[i] = (char)('0' + left % 10);
+            left /= 10;
+        }
+        if (pos < max - 1) {
+            buf[pos++] = '.';
+        }
+        for (int i = 0; i < places && pos < max - 1; i++) {
+            buf[pos++] = frac[i];
+        }
+    }
+
+    buf[pos] = '\0';
+}
+
 /* Format a value into a human-readable text string. */
 void as_value_format(const struct as_value* val, char* buf, int max,
                             int quote_strings) {
@@ -308,6 +481,9 @@ void as_value_format(const struct as_value* val, char* buf, int max,
         case AS_TYPE_UINT16:
         case AS_TYPE_UINT32:
             utoa(val->u.u32, buf);
+            break;
+        case AS_TYPE_FLOAT:
+            as_format_float(val->u.f, buf, max);
             break;
         case AS_TYPE_BOOL:
             as_copy_text(buf, val->u.boolean ? "true" : "false", max);
@@ -399,6 +575,9 @@ void as_value_cast_assign(struct as_value* dst,
             break;
         case AS_TYPE_UINT32:
             dst->u.u32 = as_value_to_u32(src);
+            break;
+        case AS_TYPE_FLOAT:
+            dst->u.f = as_value_to_float(src);
             break;
         case AS_TYPE_BOOL:
             dst->u.boolean = as_value_to_bool(src);

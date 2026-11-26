@@ -6,14 +6,16 @@
 #include "as_common.h"
 
 // The AdaScript expression lexer: it walks one line of source and reports the
-// next token, skipping spaces. Numbers become integers, double quotes collect
-// a string (with \n, \t, \" and \\ escapes), and words become identifiers or
-// the keywords true, false, null, and, or and not.
+// next token, skipping spaces. Numbers become integers, or floats when they
+// carry a fractional part like 3.5; double quotes collect a string (with \n,
+// \t, \" and \\ escapes), and words become identifiers or the keywords true,
+// false, null, and, or and not.
 
 /* Token kinds the lexer reports. */
 enum as_tok_kind {
     TOK_EOF = 0,
     TOK_INT,
+    TOK_FLOAT,
     TOK_STRING,
     TOK_IDENT,
     TOK_TRUE,
@@ -46,6 +48,7 @@ enum as_tok_kind {
 struct as_token {
     enum as_tok_kind kind;
     int32_t int_val;
+    float float_val;
     char text[AS_LINE_MAX];
 };
 

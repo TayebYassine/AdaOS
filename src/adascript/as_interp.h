@@ -4,10 +4,10 @@
 #include "as_env.h"
 
 // The AdaScript statement interpreter: it walks the prepared lines, groups
-// them into for, while and if blocks, and runs the simple statements - define,
-// delete, print, input, mode, writecell, erasecell, clearscreen, keepalive,
-// assignment and shell commands. Break, continue, return and errors travel
-// through the environment flags.
+// them into for, while, if and on blocks, and runs the simple statements -
+// define, delete, print, input, mode, writecell, erasecell, clearscreen,
+// cursorconf, setcursor, keepalive, cancel, assignment and shell commands.
+// Break, continue, return and errors travel through the environment flags.
 
 struct as_line {
     char* text;     // the line, leading spaces removed

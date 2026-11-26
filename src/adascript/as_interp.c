@@ -4,6 +4,7 @@
 #include "as_command.h"
 #include "as_env.h"
 #include "as_error.h"
+#include "as_event.h"
 #include "as_input.h"
 #include "as_parser.h"
 #include "as_screen.h"
@@ -27,7 +28,7 @@ static int as_word_is(const char* p, const char* kw) {
 
 static int as_is_block_start(const char* t) {
     return strncmp(t, "for ", 4) == 0 || strncmp(t, "while ", 6) == 0 ||
-           strncmp(t, "if ", 3) == 0;
+           strncmp(t, "if ", 3) == 0 || strncmp(t, "on ", 3) == 0;
 }
 
 /* Does this line close a block? "done" closes any, the rest name theirs. */
@@ -36,6 +37,8 @@ static int as_is_block_end(const char* t) {
            strcmp(t, "endfor") == 0 || strcmp(t, "endfor;") == 0 ||
            strcmp(t, "endwhile") == 0 || strcmp(t, "endwhile;") == 0 ||
            strcmp(t, "endif") == 0 || strcmp(t, "endif;") == 0 ||
+           strcmp(t, "endon") == 0 || strcmp(t, "endon;") == 0 ||
+           strcmp(t, "enddo") == 0 || strcmp(t, "enddo;") == 0 ||
            strcmp(t, "fi") == 0 || strcmp(t, "fi;") == 0;
 }
 
@@ -52,17 +55,20 @@ static int as_stmt_is(const char* stmt, const char* kw) {
 
 /* Return the statement that the script's mode does not allow, or 0 when it is
  * allowed. "mode cli" works in both modes: a screen script may use it to give
- * the screen back early. */
+ * the screen back early. print works in both modes: in screen mode it writes at
+ * the screen cursor. */
 static const char* as_mode_conflict(enum as_script_mode mode,
                                     const char* stmt) {
     if (mode == AS_MODE_SCREEN) {
-        if (as_stmt_is(stmt, "print")) {
-            return "print";
-        }
         if (as_stmt_is(stmt, "input")) {
             return "input";
         }
     } else if (mode == AS_MODE_CLI) {
+        const char* listener = as_event_cli_conflict(stmt);
+
+        if (listener != 0) {
+            return listener;
+        }
         if (as_stmt_is(stmt, "writecell")) {
             return "writecell";
         }
@@ -71,6 +77,12 @@ static const char* as_mode_conflict(enum as_script_mode mode,
         }
         if (as_stmt_is(stmt, "clearscreen")) {
             return "clearscreen";
+        }
+        if (as_stmt_is(stmt, "cursorconf")) {
+            return "cursorconf";
+        }
+        if (as_stmt_is(stmt, "setcursor")) {
+            return "setcursor";
         }
         if (as_stmt_is(stmt, "keepalive")) {
             return "keepalive";
@@ -524,6 +536,20 @@ static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
             return 0;
         }
 
+        // "cancel" stops the change an event describes; outside a handler it
+        // has nothing to cancel.
+        if (strcmp(stmt, "cancel") == 0) {
+            if (env->in_handler == 0) {
+                as_errorf(env,
+                          "'cancel' can only be used inside a listener.");
+                i++;
+                continue;
+            }
+            env->cancel_flag = 1;
+            i++;
+            continue;
+        }
+
         // The simple statements: one per line, no block around them.
         if (strncmp(stmt, "define ", 7) == 0) {
             as_exec_define(env, stmt);
@@ -581,11 +607,41 @@ static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
             continue;
         }
 
+        if (strncmp(stmt, "cursorconf", 10) == 0 &&
+            (stmt[10] == ' ' || stmt[10] == '\t' || stmt[10] == ';' ||
+             stmt[10] == '\0')) {
+            as_exec_cursorconf(env, stmt);
+            i++;
+            continue;
+        }
+
+        if (strncmp(stmt, "setcursor", 9) == 0 &&
+            (stmt[9] == ' ' || stmt[9] == '\t' || stmt[9] == ';' ||
+             stmt[9] == '\0')) {
+            as_exec_setcursor(env, stmt);
+            i++;
+            continue;
+        }
+
         if (strncmp(stmt, "keepalive", 9) == 0 &&
             (stmt[9] == ' ' || stmt[9] == '\t' || stmt[9] == ';' ||
              stmt[9] == '\0')) {
             as_exec_keepalive(env, stmt);
             i++;
+            continue;
+        }
+
+        // on <event> ...: record the handler and carry on after its body.
+        if (strncmp(stmt, "on ", 3) == 0) {
+            int done_line = as_find_matching_done(lines, end + 1, i);
+
+            if (done_line < 0) {
+                as_errorf(env, "'on' without matching 'endon' (or 'done').");
+                return -1;
+            }
+
+            as_event_register(env, stmt, i + 1, done_line - 1);
+            i = done_line + 1;
             continue;
         }
 

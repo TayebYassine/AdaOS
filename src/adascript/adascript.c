@@ -5,6 +5,7 @@
 #include "as_common.h"
 #include "as_env.h"
 #include "as_error.h"
+#include "as_event.h"
 #include "as_interp.h"
 #include "as_screen.h"
 #include "as_value.h"
@@ -158,8 +159,17 @@ int adascript_run_string(const char* script) {
     env.saved_row = 0;
     env.saved_col = 0;
     env.saved_top = 0;
+    env.lines = lines;
+    env.cursor_fixed = 0;
+    env.in_handler = 0;
+    env.cancel_flag = 0;
+    for (int i = 0; i < AS_EVENT_COUNT; i++) {
+        env.listeners[i].defined = 0;
+        env.listeners[i].running = 0;
+    }
 
     int result = 0;
+    int interrupted = 0;
     enum as_script_mode declared = AS_MODE_NONE;
     const char* mode_name = 0;
     int mode_line =
@@ -188,6 +198,21 @@ int adascript_run_string(const char* script) {
 
         if (as_check_script_mode(&env, lines, total) == 0) {
             result = as_exec_block(&env, lines, 0, total - 1);
+
+            // A script waiting for keys or cursor moves stays alive after its
+            // last statement, the way keepalive does.
+            if (result == 0 && !env.error && !env.exit_flag &&
+                env.screen_mode && as_event_has_waiters(&env)) {
+                result = as_event_loop(&env);
+            }
+
+            // Ctrl+E runs the exit handler once, then stops the script.
+            if (keyboard_ctrl_e_seen()) {
+                interrupted = 1;
+                keyboard_clear_ctrl_e();
+                as_event_dispatch_exit(&env);
+            }
+
             as_screen_finish(&env);
         } else {
             result = -1;
@@ -199,10 +224,8 @@ int adascript_run_string(const char* script) {
     kfree(lines);
     as_run_depth--;
 
-    if (as_run_depth == 0 && env.script_mode == AS_MODE_CLI &&
-        keyboard_ctrl_e_seen()) {
+    if (as_run_depth == 0 && env.script_mode == AS_MODE_CLI && interrupted) {
         print(" ^E (Abort)\n");
-        keyboard_clear_ctrl_e();
     }
 
     return result == 0 && env.error == 0 ? 0 : -1;

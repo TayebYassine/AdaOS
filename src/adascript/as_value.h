@@ -19,6 +19,7 @@ enum as_type {
     AS_TYPE_UINT16,
     AS_TYPE_INT32,
     AS_TYPE_UINT32,
+    AS_TYPE_FLOAT,
     AS_TYPE_STRING,
     AS_TYPE_BOOL,
     AS_TYPE_ARRAY,
@@ -32,6 +33,7 @@ struct as_value {
     union {
         int32_t i32;   // signed types
         uint32_t u32;  // unsigned types
+        float f;       // AS_TYPE_FLOAT
         char* str;     // AS_TYPE_STRING, heap owned
         int boolean;   // AS_TYPE_BOOL
         struct {
@@ -60,6 +62,9 @@ int as_array_append(struct as_value* arr, const struct as_value* item);
 
 /* Convert value to signed 32-bit integer. */
 int32_t as_value_to_i32(const struct as_value* val);
+
+/* Convert value to a float; text is read as a decimal number. */
+float as_value_to_float(const struct as_value* val);
 
 /* Check if a value evaluates to boolean true. */
 int as_value_is_truthy(const struct as_value* val);

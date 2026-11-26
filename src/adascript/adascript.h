@@ -5,8 +5,11 @@
 // file of one statement per line; variable definitions with optional types,
 // assignments, print, input, if/else blocks, for and while loops, shell
 // commands and, in screen mode, cell drawing with writecell and erasecell,
-// clearscreen to wipe the screen, and keepalive, which keeps the script running
-// until it is stopped. Ctrl+E stops
+// clearscreen to wipe the screen, cursorconf to show or hide the cursor and
+// fix or free it, keepalive, which keeps the script running until it is
+// stopped, and on listeners, which run a block when a key is pressed, an arrow
+// key moves the cursor, or Ctrl+E stops the script. A cursormove handler may
+// say cancel to refuse the move. Ctrl+E stops
 // any running script at once, in either mode, and puts the screen back.
 // Every script declares "mode screen" or "mode cli" on its first line: screen
 // scripts draw cells, CLI scripts print and read, and a statement from the

@@ -100,6 +100,8 @@ static struct as_value as_parse_equality(struct as_env* env,
                   strcmp(left.u.str, right.u.str) == 0);
         } else if (left.type == AS_TYPE_BOOL && right.type == AS_TYPE_BOOL) {
             eq = (left.u.boolean == right.u.boolean);
+        } else if (left.type == AS_TYPE_FLOAT || right.type == AS_TYPE_FLOAT) {
+            eq = (as_value_to_float(&left) == as_value_to_float(&right));
         } else {
             eq = (as_value_to_i32(&left) == as_value_to_i32(&right));
         }
@@ -127,6 +129,11 @@ static struct as_value as_parse_relational(struct as_env* env,
         if (left.type == AS_TYPE_STRING && right.type == AS_TYPE_STRING) {
             cmp = strcmp(left.u.str ? left.u.str : "",
                          right.u.str ? right.u.str : "");
+        } else if (left.type == AS_TYPE_FLOAT ||
+                   right.type == AS_TYPE_FLOAT) {
+            float a = as_value_to_float(&left);
+            float b = as_value_to_float(&right);
+            cmp = (a < b) ? -1 : (a > b ? 1 : 0);
         } else {
             int32_t a = as_value_to_i32(&left);
             int32_t b = as_value_to_i32(&right);
@@ -209,6 +216,15 @@ static struct as_value as_parse_add(struct as_env* env, struct as_lexer* lex) {
         if (op == TOK_PLUS) {
             if (left.type == AS_TYPE_STRING || right.type == AS_TYPE_STRING) {
                 left = as_join_text(&left, &right);
+            } else if (left.type == AS_TYPE_FLOAT ||
+                       right.type == AS_TYPE_FLOAT) {
+                float sum = as_value_to_float(&left) +
+                            as_value_to_float(&right);
+                as_value_free(&left);
+                as_value_free(&right);
+                left.type = AS_TYPE_FLOAT;
+                left.is_null = 0;
+                left.u.f = sum;
             } else {
                 // Add in unsigned arithmetic: signed overflow is undefined and
                 // an -O2 build is free to do anything with it.
@@ -220,6 +236,15 @@ static struct as_value as_parse_add(struct as_env* env, struct as_lexer* lex) {
                 left.is_null = 0;
                 left.u.i32 = sum;
             }
+        } else if (left.type == AS_TYPE_FLOAT ||
+                   right.type == AS_TYPE_FLOAT) {
+            float diff = as_value_to_float(&left) -
+                         as_value_to_float(&right);
+            as_value_free(&left);
+            as_value_free(&right);
+            left.type = AS_TYPE_FLOAT;
+            left.is_null = 0;
+            left.u.f = diff;
         } else {
             int32_t diff = (int32_t)((uint32_t)as_value_to_i32(&left) -
                                      (uint32_t)as_value_to_i32(&right));
@@ -241,37 +266,66 @@ static struct as_value as_parse_mul(struct as_env* env, struct as_lexer* lex) {
         enum as_tok_kind op = lex->cur.kind;
         as_lexer_next(lex);
         struct as_value right = as_parse_unary(env, lex);
-        int32_t a = as_value_to_i32(&left);
-        int32_t b = as_value_to_i32(&right);
-        int32_t res = 0;
 
-        if (op == TOK_STAR) {
-            res = (int32_t)((uint32_t)a * (uint32_t)b);
-        } else if (op == TOK_SLASH) {
-            if (b == 0) {
-                as_errorf(env, "division by zero.");
-            } else if (a == INT32_MIN && b == -1) {
-                // The result does not fit and idiv would fault the CPU.
-                as_errorf(env, "integer overflow in division.");
+        // One float side makes the whole operation a float one, except for
+        // the remainder, which only has a meaning for whole numbers.
+        if (left.type == AS_TYPE_FLOAT || right.type == AS_TYPE_FLOAT) {
+            float a = as_value_to_float(&left);
+            float b = as_value_to_float(&right);
+            float res = 0.0f;
+
+            if (op == TOK_STAR) {
+                res = a * b;
+            } else if (op == TOK_SLASH) {
+                if (b == 0.0f) {
+                    as_errorf(env, "division by zero.");
+                } else {
+                    res = a / b;
+                }
             } else {
-                res = a / b;
+                as_errorf(env,
+                          "the remainder needs whole numbers, not floats.");
             }
-        } else if (op == TOK_PERCENT) {
-            if (b == 0) {
-                as_errorf(env, "modulo by zero.");
-            } else if (a == INT32_MIN && b == -1) {
-                // The remainder is 0, but idiv faults before it gets there.
-                res = 0;
-            } else {
-                res = a % b;
+
+            as_value_free(&left);
+            as_value_free(&right);
+            left.type = AS_TYPE_FLOAT;
+            left.is_null = 0;
+            left.u.f = res;
+            continue;
+        } else {
+            int32_t a = as_value_to_i32(&left);
+            int32_t b = as_value_to_i32(&right);
+            int32_t res = 0;
+
+            if (op == TOK_STAR) {
+                res = (int32_t)((uint32_t)a * (uint32_t)b);
+            } else if (op == TOK_SLASH) {
+                if (b == 0) {
+                    as_errorf(env, "division by zero.");
+                } else if (a == INT32_MIN && b == -1) {
+                    // The result does not fit and idiv would fault the CPU.
+                    as_errorf(env, "integer overflow in division.");
+                } else {
+                    res = a / b;
+                }
+            } else if (op == TOK_PERCENT) {
+                if (b == 0) {
+                    as_errorf(env, "modulo by zero.");
+                } else if (a == INT32_MIN && b == -1) {
+                    // The remainder is 0, but idiv faults before it gets there.
+                    res = 0;
+                } else {
+                    res = a % b;
+                }
             }
+
+            as_value_free(&left);
+            as_value_free(&right);
+            left.type = AS_TYPE_INT32;
+            left.is_null = 0;
+            left.u.i32 = res;
         }
-
-        as_value_free(&left);
-        as_value_free(&right);
-        left.type = AS_TYPE_INT32;
-        left.is_null = 0;
-        left.u.i32 = res;
     }
     return left;
 }
@@ -291,6 +345,15 @@ static struct as_value as_parse_unary(struct as_env* env,
 
         val = as_parse_unary(env, lex);
         lex->depth--;
+
+        if (val.type == AS_TYPE_FLOAT) {
+            float negated = -val.u.f;
+
+            as_value_free(&val);
+            as_value_init(&res, AS_TYPE_FLOAT, AS_TYPE_VOID);
+            res.u.f = negated;
+            return res;
+        }
 
         // Negating INT32_MIN overflows; wrapping is the defined answer.
         num = (int32_t)(0u - (uint32_t)as_value_to_i32(&val));
@@ -374,6 +437,14 @@ static struct as_value as_parse_primary(struct as_env* env,
         val.type = AS_TYPE_INT32;
         val.is_null = 0;
         val.u.i32 = lex->cur.int_val;
+        as_lexer_next(lex);
+        return val;
+    }
+
+    if (lex->cur.kind == TOK_FLOAT) {
+        val.type = AS_TYPE_FLOAT;
+        val.is_null = 0;
+        val.u.f = lex->cur.float_val;
         as_lexer_next(lex);
         return val;
     }

@@ -8,9 +8,11 @@
 // put back when the run ends, even after an error. "writecell" draws text at
 // one cell with an optional colour and "erasecell" clears one cell or the
 // rectangle between two corners, and "clearscreen" clears every cell.
-// "keepalive" keeps the script running until it is stopped, and "mode cli"
-// gives the screen back early. Ctrl+E stops any running script at once, whether
-// or not it uses "keepalive".
+// "cursorconf" shows or hides the cursor and decides whether the arrow keys
+// move it, and "setcursor" puts it on one cell. "keepalive" keeps the script
+// running until it is stopped, and "mode
+// cli" gives the screen back early. Ctrl+E stops any running script at once,
+// whether or not it uses "keepalive".
 
 /* Parse a "mode <name>" statement. Returns 1 and sets *mode for a known mode,
  * 0 when the line is not a mode statement, and -1 when the name is unknown.
@@ -28,8 +30,17 @@ void as_exec_erasecell(struct as_env* env, const char* stmt);
 
 void as_exec_clearscreen(struct as_env* env, const char* stmt);
 
+/* Execute a "cursorconf visible <bool>" or "cursorconf fixed <bool>"
+ * statement; both settings belong to screen mode. */
+void as_exec_cursorconf(struct as_env* env, const char* stmt);
+
+/* Execute a "setcursor <row> <column>" statement, which moves the hardware
+ * cursor to that cell; screen mode only. */
+void as_exec_setcursor(struct as_env* env, const char* stmt);
+
 /* Execute a "keepalive" statement: keep the script alive until Ctrl+E stops
- * it, then end the script cleanly. */
+ * it, then end the script cleanly. In screen mode it waits for events instead
+ * of ignoring every key. */
 void as_exec_keepalive(struct as_env* env, const char* stmt);
 
 /* Put the shell's screen back if the run still owns it, reprinting any error

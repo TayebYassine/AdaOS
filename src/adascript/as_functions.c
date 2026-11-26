@@ -40,6 +40,7 @@ static enum as_kind as_kind_of(enum as_type type) {
         case AS_TYPE_UINT16:
         case AS_TYPE_INT32:
         case AS_TYPE_UINT32:
+        case AS_TYPE_FLOAT:
             return AS_KIND_NUMBER;
         case AS_TYPE_STRING:
             return AS_KIND_TEXT;
@@ -64,6 +65,8 @@ static const char* as_type_label(enum as_type type) {
             return "int32";
         case AS_TYPE_UINT32:
             return "uint32";
+        case AS_TYPE_FLOAT:
+            return "float";
         case AS_TYPE_STRING:
             return "string";
         case AS_TYPE_BOOL:
