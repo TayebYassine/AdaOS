@@ -23,18 +23,13 @@
 #include "timer.h"
 #include "version.h"
 
-/* Maximum number of words in one command line. */
 #define MAX_WORDS 32
-/* Number of commands shown on one page of "help". */
 #define COMMANDS_PER_PAGE 6
-/* The longest sleep acceptable: 86400 seconds (24 hours). */
 #define MAX_SLEEP_SECONDS 86400
 /* While a script runs, sleep in short steps so Ctrl+E can stop it. */
 #define SCRIPT_SLEEP_CHUNK_MS 50
-/* Number of elements in an array. */
 #define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
-/* Command ids. */
 enum command_id {
     CMD_PRINT = 0,
     CMD_HELP,
@@ -117,7 +112,6 @@ static int find_command(const char* name) {
     return CMD_NOT_FOUND;
 }
 
-/* Does this path end in ".as", the only extension "run" accepts? */
 static int has_as_extension(const char* path) {
     int len = (int)strlen(path);
 
@@ -168,7 +162,6 @@ static int split(char* line, char* words[], int max) {
     return count;
 }
 
-/* Print a number in base 10, padded with leading zeros to "width" digits. */
 static void print_padded(unsigned int value, int width) {
     char digits[10];  // enough for 4,294,967,295
     int count = 0;
@@ -229,13 +222,11 @@ static int parse_digits(const char* text, int at, int count, int* value) {
     return 1;
 }
 
-/* Say goodbye, then power the machine off. */
 static void command_shutdown(void) {
     print("It is now safe to turn off your computer.\n");
     power_shutdown();
 }
 
-/* Restart the machine. */
 static void command_reboot(void) { power_reboot(); }
 
 /* Look under "node" for names holding "pattern", printing the path of
@@ -306,7 +297,6 @@ static void tree_walk(struct fs_node* dir, char* prefix, int len) {
  * the whole script to finish, so a loop of commands rewrites the disk once. */
 static int sync_hold = 0;
 
-/* Split the line into words and run the command the first one names. */
 void command_execute(char* line) {
     char* words[MAX_WORDS];
     int count = split(line, words, MAX_WORDS);
@@ -793,7 +783,6 @@ void command_execute(char* line) {
     }
 }
 
-/* Did a command collect an error instead of normal output? */
 static int command_output_is_error(const char* text) {
     if (text == 0) {
         return 0;
@@ -806,7 +795,6 @@ static int command_output_is_error(const char* text) {
     return strncmp(text, "Error:", 6) == 0;
 }
 
-/* Run a command line and capture its screen output for AdaScript. */
 int command_run_capture(const char* line, char** output) {
     char* copy;
     char* text;

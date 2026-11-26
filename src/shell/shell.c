@@ -7,7 +7,6 @@
 #include "libc.h"
 #include "screen.h"
 
-/* Number of past lines to remember. */
 #define HISTORY_SIZE 8
 
 // History is a ring: history_start is the oldest of history_count entries.
@@ -15,7 +14,6 @@ static char history[HISTORY_SIZE][SHELL_LINE_MAX];
 static int history_count = 0;
 static int history_start = 0;
 
-/* The i-th entry, 0 = oldest. */
 static char* history_at(int i) {
     return history[(history_start + i) % HISTORY_SIZE];
 }
@@ -35,7 +33,6 @@ static void history_push(const char* line) {
     memcpy(history_at(history_count - 1), line, strlen(line) + 1);
 }
 
-/* Read one line with cursor editing and history; Enter finishes it. */
 void shell_read_line(char* line) {
     int length = 0;
     int cursor = 0;
@@ -162,7 +159,6 @@ void shell_read_line(char* line) {
     }
 }
 
-/* Print the banner, then loop forever: prompt, read a line, execute it. */
 void shell_run(void) {
     char line[SHELL_LINE_MAX];
 

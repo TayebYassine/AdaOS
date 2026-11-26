@@ -5,10 +5,8 @@
 #include "interrupt.h"
 #include "io.h"
 
-/* The keyboard sends its scancodes here. */
 #define KEYBOARD_DATA_PORT 0x60
 
-/* Prefix byte of "extended" keys (arrows, ...). */
 #define SCANCODE_EXTENDED 0xE0
 /* Bit 7 set means the key was released, not pressed. */
 #define SCANCODE_RELEASED 0x80
@@ -26,7 +24,6 @@
 #define SCANCODE_LEFT 0x4B
 #define SCANCODE_RIGHT 0x4D
 
-/* Keys we can hold ahead of the shell. */
 #define KEY_BUFFER_SIZE 128
 
 static int shift_held = 0;
@@ -182,7 +179,6 @@ static void buffer_push(int key) {
     key_buffer_count++;
 }
 
-/* IRQ1: the keyboard has a new scancode waiting in port 0x60. */
 static void keyboard_irq(struct interrupt_frame* frame) {
     (void)frame;  // we do not need to know what was interrupted
 
@@ -198,7 +194,6 @@ static void keyboard_irq(struct interrupt_frame* frame) {
     }
 }
 
-/* Start receiving keystrokes on IRQ1. */
 void keyboard_init(void) { interrupt_register_irq(1, keyboard_irq); }
 
 /* Take the oldest key out of the buffer, or 0 if there is none. */
@@ -219,10 +214,8 @@ static int buffer_pop(void) {
     return key;
 }
 
-/* Return the oldest key without waiting, or 0 if no key is ready. */
 int keyboard_poll(void) { return buffer_pop(); }
 
-/* Block until a key is available, then return it. */
 int keyboard_getchar(void) {
     for (;;) {
         int key = buffer_pop();
@@ -238,5 +231,4 @@ int keyboard_getchar(void) {
 /* Was Ctrl+E pressed since the last keyboard_clear_ctrl_e()? */
 int keyboard_ctrl_e_seen(void) { return ctrl_e_seen; }
 
-/* Forget an earlier Ctrl+E press. */
 void keyboard_clear_ctrl_e(void) { ctrl_e_seen = 0; }

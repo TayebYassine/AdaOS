@@ -32,7 +32,6 @@ int keyboard_getchar(void);
 /* Was Ctrl+E pressed since the last keyboard_clear_ctrl_e()? */
 int keyboard_ctrl_e_seen(void);
 
-/* Forget an earlier Ctrl+E press. */
 void keyboard_clear_ctrl_e(void);
 
 #endif /* ADAOS_KEYBOARD_H */

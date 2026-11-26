@@ -25,7 +25,6 @@ static int as_word_is(const char* p, const char* kw) {
            after == ';';
 }
 
-/* Does this line open a block? */
 static int as_is_block_start(const char* t) {
     return strncmp(t, "for ", 4) == 0 || strncmp(t, "while ", 6) == 0 ||
            strncmp(t, "if ", 3) == 0;
@@ -40,7 +39,6 @@ static int as_is_block_end(const char* t) {
            strcmp(t, "fi") == 0 || strcmp(t, "fi;") == 0;
 }
 
-/* Is stmt the whole statement keyword kw? */
 static int as_stmt_is(const char* stmt, const char* kw) {
     size_t len = strlen(kw);
 
@@ -71,6 +69,9 @@ static const char* as_mode_conflict(enum as_script_mode mode,
         if (as_stmt_is(stmt, "erasecell")) {
             return "erasecell";
         }
+        if (as_stmt_is(stmt, "clearscreen")) {
+            return "clearscreen";
+        }
         if (as_stmt_is(stmt, "keepalive")) {
             return "keepalive";
         }
@@ -87,7 +88,6 @@ static const char* as_mode_conflict(enum as_script_mode mode,
     return 0;
 }
 
-/* Report a statement used in the wrong mode. */
 static void as_mode_error(struct as_env* env, const char* statement) {
     as_errorf(env, "'%s' is not available in mode %s.", statement,
               env->script_mode == AS_MODE_SCREEN ? "screen" : "cli");
@@ -116,7 +116,6 @@ int as_check_script_mode(struct as_env* env, struct as_line* lines, int total) {
     return 0;
 }
 
-/* Find the matching ending for a block. */
 static int as_find_matching_done(struct as_line* lines, int total, int start) {
     int depth = 1;
     for (int i = start + 1; i < total; i++) {
@@ -133,7 +132,6 @@ static int as_find_matching_done(struct as_line* lines, int total, int start) {
     return -1;
 }
 
-/* Execute a "define" statement. */
 static void as_exec_define(struct as_env* env, const char* stmt) {
     const char* p = stmt + 6;  // skip "define"
     while (*p == ' ') p++;
@@ -216,7 +214,6 @@ static void as_exec_define(struct as_env* env, const char* stmt) {
     }
 }
 
-/* Execute a "delete" statement. */
 static void as_exec_delete(struct as_env* env, const char* stmt) {
     const char* p = stmt + 6;
     while (*p == ' ') p++;
@@ -236,7 +233,6 @@ static void as_exec_delete(struct as_env* env, const char* stmt) {
     }
 }
 
-/* Execute a "print" statement. */
 static void as_exec_print(struct as_env* env, const char* stmt) {
     const char* p = stmt + 5;
     char body[AS_LINE_MAX];
@@ -364,7 +360,6 @@ static void as_exec_print(struct as_env* env, const char* stmt) {
     }
 }
 
-/* Execute an assignment: <var> = <expr> or <var>[<index>] = <expr>. */
 static void as_exec_assignment(struct as_env* env, const char* stmt) {
     const char* eq = strchr(stmt, '=');
     if (eq == 0) return;
@@ -466,7 +461,6 @@ static void as_exec_assignment(struct as_env* env, const char* stmt) {
 // 16 KiB stack, and stops a bad script with an error instead of a crash.
 #define AS_MAX_BLOCK_DEPTH 8
 
-/* Execute a block of lines between start and end (inclusive). */
 static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
                                int start, int end) {
     int i = start;
@@ -575,6 +569,14 @@ static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
         if (strncmp(stmt, "erasecell", 9) == 0 &&
             (stmt[9] == ' ' || stmt[9] == '\0')) {
             as_exec_erasecell(env, stmt);
+            i++;
+            continue;
+        }
+
+        if (strncmp(stmt, "clearscreen", 11) == 0 &&
+            (stmt[11] == ' ' || stmt[11] == '\t' || stmt[11] == ';' ||
+             stmt[11] == '\0')) {
+            as_exec_clearscreen(env, stmt);
             i++;
             continue;
         }
@@ -952,8 +954,6 @@ static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
     return 0;
 }
 
-/* Run a block, counting the nesting so a script cannot recurse off the stack.
- */
 int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                   int end) {
     int result;

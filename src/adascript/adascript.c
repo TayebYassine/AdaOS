@@ -14,20 +14,16 @@
 #include "libc.h"
 #include "screen.h"
 
-/* How deeply scripts may run other scripts. */
 #define AS_MAX_RUN_DEPTH 8
 
 static int as_run_depth = 0;
 
-/* Is an AdaScript running right now? */
 int adascript_is_running(void) { return as_run_depth > 0; }
 
-/* Has Ctrl+E asked the running script to stop? */
 int adascript_interrupt_requested(void) {
     return as_run_depth > 0 && keyboard_ctrl_e_seen();
 }
 
-/* Run an AdaScript string. */
 int adascript_run_string(const char* script) {
     if (script == 0) {
         return 0;
@@ -212,7 +208,6 @@ int adascript_run_string(const char* script) {
     return result == 0 && env.error == 0 ? 0 : -1;
 }
 
-/* Run an AdaScript file at the given filesystem path. */
 int adascript_run_file(const char* path) {
     struct fs_node* node = fs_resolve(path);
     if (node == 0) {

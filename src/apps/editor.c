@@ -41,12 +41,13 @@ static const char* const highlight_keywords[] = {
 
 /* Shell built-ins and the AdaScript statement keywords. */
 static const char* const highlight_commands[] = {
-    "cal",    "cat",   "cd",      "clear",     "cp",        "define",
-    "delete", "disk",  "find",    "help",      "input",     "ls",
-    "mem",    "mkdir", "mv",      "print",     "pwd",       "reboot",
-    "rm",     "run",   "setdate", "settime",   "shutdown",  "sleep",
-    "snake",  "tasks", "tetris",  "time",      "tree",      "uptime",
-    "ver",    "write", "mode",    "writecell", "erasecell", "keepalive"};
+    "cal",       "cat",     "cd",      "clear",    "clearscreen", "cp",
+    "define",    "delete",  "disk",    "find",     "help",        "input",
+    "ls",        "mem",     "mkdir",   "mode",     "mv",          "print",
+    "pwd",       "reboot",  "rm",      "run",      "setdate",     "settime",
+    "shutdown",  "sleep",   "snake",   "tasks",    "tetris",      "time",
+    "tree",      "uptime",  "ver",     "write",    "writecell",   "erasecell",
+    "keepalive"};
 
 /* The names the AdaScript parser accepts after a "define" or a ":". */
 static const char* const highlight_types[] = {

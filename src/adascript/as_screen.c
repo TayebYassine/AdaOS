@@ -12,7 +12,6 @@
 #include "libc.h"
 #include "screen.h"
 
-/* Most arguments one screen statement can hold. */
 #define AS_SCREEN_ARGS 12
 
 /* The 16 text-mode colours, by the names a script may write. An index is the
@@ -28,7 +27,6 @@ static const char* const as_color_names[16] = {
  * holds it, so a script started by another script cannot steal it back. */
 static int as_screen_holders = 0;
 
-/* Compare two words, ignoring case. */
 static int as_same_word(const char* a, const char* b) {
     while (*a != '\0' && *b != '\0') {
         if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) {
@@ -101,7 +99,6 @@ static int as_split_args(char* line, char** args, int max) {
     return count;
 }
 
-/* Evaluate one argument as a number. */
 static int as_arg_number(struct as_env* env, const char* expr, int* out) {
     struct as_value val = as_eval_expression(env, expr);
     int ok = !env->error;
@@ -133,7 +130,6 @@ static void as_join_args(char* out, int max, char** args, int first, int last) {
     out[pos] = '\0';
 }
 
-/* Look up a colour name and hand back its attribute byte. */
 static int as_color_attribute(const char* name, uint8_t* attribute) {
     for (int i = 0; i < 16; i++) {
         if (as_same_word(name, as_color_names[i])) {
@@ -155,7 +151,6 @@ static int as_color_attribute(const char* name, uint8_t* attribute) {
     return 0;
 }
 
-/* Give the screen back and end the run's hold on it. */
 static void as_leave_screen(struct as_env* env) {
     screen_set_cursor_visible(1);
     screen_restore(env->saved_cells, env->saved_row, env->saved_col);
@@ -206,7 +201,6 @@ int as_parse_mode_line(const char* stmt, enum as_script_mode* mode,
     return -1;
 }
 
-/* Execute a "mode screen" or "mode cli" statement. */
 void as_exec_mode(struct as_env* env, const char* stmt) {
     enum as_script_mode mode;
     const char* name = 0;
@@ -261,7 +255,6 @@ void as_exec_mode(struct as_env* env, const char* stmt) {
     }
 }
 
-/* Execute a "writecell <row> <column> <text> [color <name>]" statement. */
 void as_exec_writecell(struct as_env* env, const char* stmt) {
     char line[AS_LINE_MAX];
     char text[AS_LINE_MAX];
@@ -332,7 +325,6 @@ void as_exec_writecell(struct as_env* env, const char* stmt) {
     as_value_free(&val);
 }
 
-/* Execute an "erasecell <row> <column> [<row> <column>]" statement. */
 void as_exec_erasecell(struct as_env* env, const char* stmt) {
     char line[AS_LINE_MAX];
     char* args[AS_SCREEN_ARGS];
@@ -381,6 +373,20 @@ void as_exec_erasecell(struct as_env* env, const char* stmt) {
     screen_fill_rect(row1 - 1, col1 - 1, row2 - 1, col2 - 1, ' ', 0x0F);
 }
 
+void as_exec_clearscreen(struct as_env* env, const char* stmt) {
+    const char* p = stmt + 11;
+
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    if (*p != '\0') {
+        as_errorf(env, "clearscreen takes no arguments.");
+        return;
+    }
+
+    screen_clear();
+}
+
 /* Execute a "keepalive" statement: keep the script running until Ctrl+E stops
  * it. Every other key is ignored. Ctrl+E is noticed even when this statement is
  * never reached, so this loop only has to stay alive and let it be seen. */
@@ -406,7 +412,6 @@ void as_exec_keepalive(struct as_env* env, const char* stmt) {
     }
 }
 
-/* Put the shell's screen back if the run still owns it. */
 void as_screen_finish(struct as_env* env) {
     char number[12];
 

@@ -9,7 +9,6 @@
 #include "screen.h"
 #include "shell.h"
 
-/* The natural range of a numeric type. */
 static void as_type_number_bounds(enum as_type t, int32_t* lo, uint32_t* hi) {
     switch (t) {
         case AS_TYPE_INT8:
@@ -47,7 +46,6 @@ static void as_type_number_bounds(enum as_type t, int32_t* lo, uint32_t* hi) {
     }
 }
 
-/* Parse text that must be a whole number, with an optional sign. */
 static int as_parse_whole_number(const char* text, int* negative,
                                  uint32_t* magnitude) {
     const char* s = text;
@@ -121,7 +119,6 @@ static void as_input_expect(enum as_type type, int32_t lo, uint32_t hi,
             low, high);
 }
 
-/* Execute an "input" statement: read a line and validate it for a variable. */
 void as_exec_input(struct as_env* env, const char* stmt) {
     const char* p = stmt + 5;
     while (*p == ' ' || *p == '\t') p++;
