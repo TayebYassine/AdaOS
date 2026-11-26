@@ -9,6 +9,12 @@
 // one cell with an optional colour and "erasecell" clears one cell or the
 // rectangle between two corners. "mode cli" gives the screen back early.
 
+/* Parse a "mode <name>" statement. Returns 1 and sets *mode for a known mode,
+ * 0 when the line is not a mode statement, and -1 when the name is unknown.
+ * When name is not null it points at the name text. */
+int as_parse_mode_line(const char* stmt, enum as_script_mode* mode,
+                       const char** name);
+
 /* Execute a "mode screen" or "mode cli" statement. */
 void as_exec_mode(struct as_env* env, const char* stmt);
 

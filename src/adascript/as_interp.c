@@ -39,6 +39,79 @@ static int as_is_block_end(const char* t) {
            strcmp(t, "fi") == 0 || strcmp(t, "fi;") == 0;
 }
 
+/* Is stmt the whole statement keyword kw? */
+static int as_stmt_is(const char* stmt, const char* kw) {
+    size_t len = strlen(kw);
+
+    if (strncmp(stmt, kw, len) != 0) {
+        return 0;
+    }
+
+    return stmt[len] == '\0' || stmt[len] == ' ' || stmt[len] == '\t' ||
+           stmt[len] == ';';
+}
+
+/* Return the statement that the script's mode does not allow, or 0 when it is
+ * allowed. "mode cli" works in both modes: a screen script may use it to give
+ * the screen back early. */
+static const char* as_mode_conflict(enum as_script_mode mode,
+                                    const char* stmt) {
+    if (mode == AS_MODE_SCREEN) {
+        if (as_stmt_is(stmt, "print")) {
+            return "print";
+        }
+        if (as_stmt_is(stmt, "input")) {
+            return "input";
+        }
+    } else if (mode == AS_MODE_CLI) {
+        if (as_stmt_is(stmt, "writecell")) {
+            return "writecell";
+        }
+        if (as_stmt_is(stmt, "erasecell")) {
+            return "erasecell";
+        }
+        if (as_stmt_is(stmt, "mode")) {
+            enum as_script_mode declared;
+
+            if (as_parse_mode_line(stmt, &declared, 0) == 1 &&
+                declared == AS_MODE_SCREEN) {
+                return "mode screen";
+            }
+        }
+    }
+
+    return 0;
+}
+
+/* Report a statement used in the wrong mode. */
+static void as_mode_error(struct as_env* env, const char* statement) {
+    as_errorf(env, "'%s' is not available in mode %s.", statement,
+              env->script_mode == AS_MODE_SCREEN ? "screen" : "cli");
+}
+
+/* Check every line against the declared mode before the script runs, so a
+ * stray statement is reported before the script can change the screen. */
+int as_check_script_mode(struct as_env* env, struct as_line* lines, int total) {
+    for (int i = 0; i < total; i++) {
+        const char* stmt = lines[i].text;
+        const char* conflict;
+
+        while (*stmt == ' ') {
+            stmt++;
+        }
+
+        conflict = as_mode_conflict(env->script_mode, stmt);
+        if (conflict != 0) {
+            env->cur_line = lines[i].orig_line;
+            env->cur_col = lines[i].orig_col;
+            as_mode_error(env, conflict);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 /* Find the matching ending for a block. */
 static int as_find_matching_done(struct as_line* lines, int total, int start) {
     int depth = 1;
@@ -411,6 +484,17 @@ static int as_exec_block_inner(struct as_env* env, struct as_line* lines,
         if (*stmt == '\0') {
             i++;
             continue;
+        }
+
+        // A statement from the other mode must never run, even if the
+        // up-front scan somehow missed it.
+        {
+            const char* conflict = as_mode_conflict(env->script_mode, stmt);
+            if (conflict != 0) {
+                as_mode_error(env, conflict);
+                i++;
+                continue;
+            }
         }
 
         // Loop and script control, which only set a flag for the caller.

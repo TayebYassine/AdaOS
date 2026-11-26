@@ -4,12 +4,15 @@
 // AdaScript: a small interpreted language run by the shell. A script is a text
 // file of one statement per line; variable definitions with optional types,
 // assignments, print, input, if/else blocks, for and while loops, shell
-// commands and, in screen mode, cell drawing with writecell and erasecell. The
-// interpreter tokenizes each line, parses expressions with the
-// usual precedence, keeps variables in an environment with declared types, and
-// reports errors with the line and column where they happened. Values are
-// integers, strings, booleans, null and arrays. Running a script builds its own
-// environment, so scripts do not leak variables into each other.
+// commands and, in screen mode, cell drawing with writecell and erasecell.
+// Every script declares "mode screen" or "mode cli" on its first line: screen
+// scripts draw cells, CLI scripts print and read, and a statement from the
+// other mode stops the run with an error. The interpreter tokenizes each line,
+// parses expressions with the usual precedence, keeps variables in an
+// environment with declared types, and reports errors with the line and column
+// where they happened. Values are integers, strings, booleans, null and arrays.
+// Running a script builds its own environment, so scripts do not leak variables
+// into each other.
 
 /* Run an AdaScript file (.as) at the given filesystem path; 0 on success. */
 int adascript_run_file(const char* path);

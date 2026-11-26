@@ -1,13 +1,4 @@
-# AdaScript screen mode demonstration.
-#
-# Run it with:  run screen.as
-#
-# "mode screen" saves the shell's screen, clears it, and gives the script the
-# whole 80x25 text screen. When the script ends (or fails), the saved screen
-# comes back by itself, clock bar and prompt included.
-#
-# Cells are 1-based: row 1 is the top row and column 1 the left edge. Colours
-# are optional and default to white.
+# AdaScript Demonstration Script Screen Mode
 
 mode screen
 

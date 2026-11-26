@@ -171,15 +171,58 @@ static void as_leave_screen(struct as_env* env) {
     }
 }
 
-/* Execute a "mode screen" or "mode cli" statement. */
-void as_exec_mode(struct as_env* env, const char* stmt) {
-    const char* name = stmt + 4;
+/* Parse a "mode <name>" statement. Returns 1 and sets *mode for a known mode,
+ * 0 when the line is not a mode statement, and -1 when the name is unknown.
+ * When name is not null it points at the name text. */
+int as_parse_mode_line(const char* stmt, enum as_script_mode* mode,
+                       const char** name) {
+    const char* p = stmt;
 
-    while (*name == ' ' || *name == '\t') {
-        name++;
+    if (strncmp(p, "mode", 4) != 0) {
+        return 0;
+    }
+    if (p[4] != '\0' && p[4] != ' ' && p[4] != '\t') {
+        return 0;
     }
 
-    if (as_same_word(name, "screen")) {
+    p += 4;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    if (name != 0) {
+        *name = p;
+    }
+
+    if (as_same_word(p, "screen")) {
+        *mode = AS_MODE_SCREEN;
+        return 1;
+    }
+    if (as_same_word(p, "cli")) {
+        *mode = AS_MODE_CLI;
+        return 1;
+    }
+    return -1;
+}
+
+/* Execute a "mode screen" or "mode cli" statement. */
+void as_exec_mode(struct as_env* env, const char* stmt) {
+    enum as_script_mode mode;
+    const char* name = 0;
+    int parsed = as_parse_mode_line(stmt, &mode, &name);
+
+    if (parsed < 0) {
+        if (name != 0 && name[0] != '\0') {
+            as_errorf(env, "unknown mode '%s'; use 'screen' or 'cli'.", name);
+        } else {
+            as_errorf(env, "mode needs a name: 'screen' or 'cli'.");
+        }
+        return;
+    }
+    if (parsed == 0) {
+        return;
+    }
+
+    if (mode == AS_MODE_SCREEN) {
         uint16_t* cells;
 
         if (env->screen_mode) {
@@ -211,14 +254,9 @@ void as_exec_mode(struct as_env* env, const char* stmt) {
         return;
     }
 
-    if (as_same_word(name, "cli")) {
-        if (env->screen_mode) {
-            as_leave_screen(env);
-        }
-        return;
+    if (env->screen_mode) {
+        as_leave_screen(env);
     }
-
-    as_errorf(env, "unknown mode '%s'; use 'screen' or 'cli'.", name);
 }
 
 /* Execute a "writecell <row> <column> <text> [color <name>]" statement. */

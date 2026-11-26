@@ -60,6 +60,8 @@ This operating system has most of the important features, such as file managemen
 
   A script can also draw on the whole screen: `mode screen` saves the shell's screen, clears it, and gives the script all 80x25 cells; `writecell <row> <column> <text> [color <name>]` writes at one cell, and `erasecell <row> <column>` or `erasecell <row> <column> <row> <column>` clears a cell or a rectangle. The shell's screen comes back automatically when the script ends, and `mode cli` gives it back early. The sample `screen.as` demonstrates all of it.
 
+  Every script must declare its mode on the first non-comment line: `mode screen` or `mode cli`. A script without a mode, or with any other mode name, stops with an error. The mode decides which statements the script may use: a `screen` script can use `writecell` and `erasecell` but not `print` or `input`, while a `cli` script can use `print` and `input` but not the screen statements. Using a statement from the other mode stops the script with an error before it runs.
+
   <img src="./assets/adascript.gif" />
 </details>
 

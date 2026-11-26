@@ -4,6 +4,7 @@
 
 #include "as_common.h"
 #include "as_env.h"
+#include "as_error.h"
 #include "as_interp.h"
 #include "as_screen.h"
 #include "as_value.h"
@@ -19,7 +20,7 @@ static int as_run_depth = 0;
 
 /* Run an AdaScript string. */
 int adascript_run_string(const char* script) {
-    if (script == 0 || script[0] == '\0') {
+    if (script == 0) {
         return 0;
     }
 
@@ -142,15 +143,47 @@ int adascript_run_string(const char* script) {
     env.error_text[0] = '\0';
     env.cur_line = 0;
     env.cur_col = 0;
+    env.script_mode = AS_MODE_NONE;
     env.screen_mode = 0;
     env.saved_cells = 0;
     env.saved_row = 0;
     env.saved_col = 0;
     env.saved_top = 0;
 
-    int result = as_exec_block(&env, lines, 0, total - 1);
+    int result = 0;
+    enum as_script_mode declared = AS_MODE_NONE;
+    const char* mode_name = 0;
+    int mode_line = total > 0 ? as_parse_mode_line(lines[0].text, &declared,
+                                                   &mode_name)
+                              : 0;
 
-    as_screen_finish(&env);
+    if (mode_line == 0) {
+        env.cur_line = total > 0 ? lines[0].orig_line : 1;
+        env.cur_col = total > 0 ? lines[0].orig_col : 1;
+        as_errorf(&env,
+                  "a script must declare 'mode screen' or 'mode cli' on its "
+                  "first line.");
+        result = -1;
+    } else if (mode_line < 0) {
+        env.cur_line = lines[0].orig_line;
+        env.cur_col = lines[0].orig_col;
+        if (mode_name != 0 && mode_name[0] != '\0') {
+            as_errorf(&env, "unknown mode '%s'; use 'screen' or 'cli'.",
+                      mode_name);
+        } else {
+            as_errorf(&env, "mode needs a name: 'screen' or 'cli'.");
+        }
+        result = -1;
+    } else {
+        env.script_mode = declared;
+
+        if (as_check_script_mode(&env, lines, total) == 0) {
+            result = as_exec_block(&env, lines, 0, total - 1);
+            as_screen_finish(&env);
+        } else {
+            result = -1;
+        }
+    }
 
     as_env_cleanup(&env);
     kfree(script_copy);

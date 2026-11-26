@@ -8,6 +8,14 @@
 // continue, return or error out of a block. The environment is built for one
 // run, so scripts do not leak variables into each other.
 
+/* The mode a script declares on its first line. It fixes which statements the
+ * script may use: screen scripts draw cells, CLI scripts read and print. */
+enum as_script_mode {
+    AS_MODE_NONE = 0,  // no mode has been declared
+    AS_MODE_SCREEN,
+    AS_MODE_CLI,
+};
+
 /* One variable in RAM. */
 struct as_var {
     char name[AS_NAME_MAX];
@@ -29,6 +37,7 @@ struct as_env {
     char error_text[AS_LINE_MAX];  // and how to explain it
     int cur_line;                  // the statement being run, kept up
     int cur_col;                   // to date by as_exec_block()
+    enum as_script_mode script_mode;  // mode declared by the first statement
     int screen_mode;  // the run owns the screen and must give it back
     uint16_t* saved_cells;  // the shell's text cells while it does
     int saved_row;          // and the cursor, top row and cursor visibility

@@ -21,4 +21,9 @@ struct as_line {
 int as_exec_block(struct as_env* env, struct as_line* lines, int start,
                   int end);
 
+/* Check every statement against the mode the script declared. Returns 0 when
+ * the script may run, -1 after reporting the first statement used in the
+ * wrong mode. */
+int as_check_script_mode(struct as_env* env, struct as_line* lines, int total);
+
 #endif /* ADAOS_ADASCRIPT_INTERP_H */

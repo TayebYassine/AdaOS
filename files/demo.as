@@ -1,7 +1,5 @@
-# AdaScript Demonstration Script
-#
-# This script runs on the normal command-line screen. Screen mode, which draws
-# on a cleared screen and puts the shell back afterwards, is shown in screen.as.
+# AdaScript Demonstration Script CLI Mode
+
 mode cli
 
 # Variables and types

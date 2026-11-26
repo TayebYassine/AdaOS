@@ -28,20 +28,25 @@
 
 /* Words AdaScript runs its own syntax with; none of them is a shell command. */
 static const char* const highlight_keywords[] = {
-    "and",   "break",  "continue", "do",       "done",   "elif",
-    "else",  "endfor", "endif",    "endwhile", "endl",   "exit",
-    "false", "fi",     "for",      "from",     "if",     "in",
-    "len",   "not",    "null",     "or",       "return", "step",
-    "then",  "to",     "true",     "typeof",   "while",  "range"};
+    "and",       "break",      "continue",  "do",        "done",
+    "elif",      "else",       "endfor",    "endif",     "endwhile",
+    "endl",      "exit",       "false",     "fi",        "for",
+    "from",      "if",         "in",        "len",       "not",
+    "null",      "or",         "return",    "step",      "then",
+    "to",        "true",       "typeof",    "while",     "range",
+    "color",     "black",      "blue",      "green",     "cyan",
+    "red",       "magenta",    "brown",     "lightgray", "darkgray",
+    "lightblue", "lightgreen", "lightcyan", "lightred",  "lightmagenta",
+    "yellow",    "white"};
 
 /* Shell built-ins, plus the three AdaScript statements that look like them. */
 static const char* const highlight_commands[] = {
-    "cal",     "cat",      "cd",    "clear",  "cp",    "define", "delete",
-    "disk",    "find",     "help",  "input",  "ls",    "mem",    "mkdir",
-    "mv",      "print",    "pwd",   "reboot", "rm",    "run",    "setdate",
-    "settime", "shutdown", "sleep", "snake",  "tasks", "tetris", "time",
-    "tree",    "uptime",   "ver",   "write",
-};
+    "cal",    "cat",   "cd",      "clear",     "cp",       "define",
+    "delete", "disk",  "find",    "help",      "input",    "ls",
+    "mem",    "mkdir", "mv",      "print",     "pwd",      "reboot",
+    "rm",     "run",   "setdate", "settime",   "shutdown", "sleep",
+    "snake",  "tasks", "tetris",  "time",      "tree",     "uptime",
+    "ver",    "write", "mode",    "writecell", "erasecell"};
 
 /* The names the AdaScript parser accepts after a "define" or a ":". */
 static const char* const highlight_types[] = {
@@ -411,7 +416,8 @@ static void draw_status(void) {
     if (note[0] != '\0') {
         screen_puts_at(SCREEN_ROWS - 1, 24, note, COLOR_BAR);
     } else if (truncated) {
-        screen_puts_at(SCREEN_ROWS - 1, 24, "file too large to edit", COLOR_BAR);
+        screen_puts_at(SCREEN_ROWS - 1, 24, "file too large to edit",
+                       COLOR_BAR);
     }
 }
 
